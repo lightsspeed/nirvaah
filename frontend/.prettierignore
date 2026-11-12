@@ -1,0 +1,18 @@
+# Build output and dependencies
+dist/
+node_modules/
+package-lock.json
+
+# Backups of old source
+.src-backup-*/
+
+# Stylesheets and HTML are excluded from the first pass on purpose: prettier
+# would reflow ~16k lines of hand-tuned CSS and the static shell in one commit,
+# which is a review nobody can read. Format JS/JSX/JSON only until the
+# stylesheet consolidation lands (docs/engineering/CODING_STANDARDS.md).
+*.css
+*.html
+
+# Generated / third-party assets
+public/sw.js
+nirvaah-brand-kit-v2/

@@ -2,6 +2,14 @@
 
 Nirvaah is a responsive personal finance MVP with a modular fintech dashboard inspired by the supplied visual reference.
 
+## Engineering standards
+
+How this repository is built and reviewed lives in [`docs/engineering/`](docs/engineering/):
+coding and API standards, architecture, database rules, security posture, testing
+expectations, the assistant's engineering contract, and a Definition of Done
+(including the known-debt ratchet). CI runs the checks described in
+`TESTING_STANDARDS.md` on every pull request.
+
 ## Stack
 - Frontend: React 18, Vite, Recharts, Lucide icons
 - Backend: FastAPI, SQLAlchemy, JWT authentication
