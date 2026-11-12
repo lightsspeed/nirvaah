@@ -19,7 +19,7 @@ Configuration lives in `backend/pyproject.toml`. Two tiers:
 - **Blocking in CI** — `ruff check --select E9,F63,F7,F82,F821`: syntax errors,
   undefined names, bad forward references. This set is clean today; keep it clean.
 - **Advisory in CI** — the full configured set (`E4,E7,E9,F,I,B,UP`, minus
-  `B008` for FastAPI `Depends`) plus `ruff format --check`. 81 findings as of
+  `B008` for FastAPI `Depends`) plus `ruff format --check`. 79 findings as of
   this branch; see `DEFINITION_OF_DONE.md` for the ratchet.
 
 `B008` is ignored on purpose: `Depends(...)` in a default argument is FastAPI's
@@ -44,10 +44,10 @@ documented idiom, not a bug.
 
 ### Known deviations (measured on this branch — do not fix by mass rewrite)
 ```
-ruff check (configured set) : 81 findings
+ruff check (configured set) : 79 findings
   E702 41  multiple statements on one line ("db.commit(); db.refresh(row)")
   I001 16  unsorted imports
-  F401 11  unused imports
+  F401  9  unused imports
   E741  6  ambiguous variable name ("l")
   E701  3  multiple statements with colon
   B904  2  raise without "from" inside except

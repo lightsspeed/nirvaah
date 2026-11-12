@@ -32,7 +32,6 @@ from ..ai import (
     DELETE_OPS,
     build_snapshot,
     clean_reply,
-    execute_action,
     guard_action,
     parse_model_output,
     system_prompt,

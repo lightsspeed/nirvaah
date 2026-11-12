@@ -48,8 +48,8 @@ backend/app/
   schemas.py         Pydantic request bodies (money routes only)
   security.py        bcrypt hashing, HS256 JWT, get_current_user dependency
   database.py        engine + SessionLocal + Base
-  ai.py              snapshot builder, system prompt, action catalogue,
-                     guard_action, backwards-compatible execute_action
+  ai.py              snapshot builder, system prompt, action catalogue, guard_action
+                     (writes live in agent/execution.py)
   agent/
     api.py           /api/chat/*: conversations, messages, confirm, memories, metrics
     graph.py         LangGraph node definitions + run_turn

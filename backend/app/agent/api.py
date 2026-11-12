@@ -13,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..ai import DELETE_OPS, execute_action
+from ..ai import DELETE_OPS
 from . import execution, focus as focus_mod, obs
 from ..database import get_db
 from ..security import get_current_user

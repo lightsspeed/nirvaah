@@ -6,7 +6,10 @@ holds the parts that touch the database and the record rules:
   * `build_snapshot()` — a compact, factual view of the user's records
   * `SYSTEM_RULES` / `system_prompt()` — how the model must answer
   * `parse_model_output()` — tolerant JSON reader
-  * `execute_action()` / `guard_action()` — validated writes, delete proposals
+  * `guard_action()` — refuses an action whose target is not what the user named
+
+Writes do not happen here: every mutation goes through `app/agent/execution.py`,
+which commits and then reads the row back before anything is reported as done.
 """
 
 from __future__ import annotations
@@ -418,17 +421,6 @@ def guard_action(db: Session, user, action: dict, message: str) -> str | None:
         return None
     return (f'The {label} I found does not match "{message.strip()}" — nothing was changed. '
             f"Tell me the exact name, amount or date.")
-
-
-def execute_action(db: Session, user, action: dict, dry_run: bool = False) -> dict:
-    """Backwards-compatible wrapper around the verified executor.
-
-    Old callers keep the {"op","ok","summary","id"} keys; the result also carries
-    success/verified/changes so a caller can tell a real write from an intention.
-    """
-    from .agent import execution
-
-    return execution.execute(db, user, action, dry_run=dry_run)
 
 
 from .agent.reply import clean_reply  # noqa: E402  (re-exported for the graph)
