@@ -1,0 +1,39 @@
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+*.db
+*.sqlite3
+
+# node / vite
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/tfplan
+infra/terraform/terraform.tfvars
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# local scratch
+*.log
+tmp/
+
+# local source backups
+frontend/.src-backup-*/

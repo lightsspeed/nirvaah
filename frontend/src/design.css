@@ -1,0 +1,6041 @@
+/* ==========================================================================
+   NIRVAAH — DESIGN LAYER (DESIGN.md enforcement)
+   Loaded last. Implements the component contract from DESIGN.md on top of the
+   legacy sheets, which are left in place so layout scaffolding keeps working.
+   !important is used only where a legacy rule already used it.
+
+   Contract recap (DESIGN.md · Shapes):
+     sidebar / dialog           18px
+     card / panel / table / menu 14px
+     controls (button/input/select) 8px
+     menu item / small control    6px
+     tabs / chips / badges / pills  full
+   ========================================================================== */
+
+/* ── Base ──────────────────────────────────────────────────────────────── */
+html,
+body {
+  font-family: var(--font-body) !important;
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'ss01' 1;
+}
+
+body {
+  font-size: var(--text-base);
+  line-height: 1.55;
+}
+
+h1, h2, h3, h4, h5, h6, b, strong {
+  font-family: var(--font-display);
+}
+
+::selection {
+  background: var(--brand-soft);
+  color: var(--brand-soft-foreground);
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Every figure in the product is tabular. */
+.big,
+.balance-number,
+.rolling-number,
+.insight-val,
+.insight-pct,
+.pie-amt,
+.summary-stat b,
+.drilldown-stat b,
+.field-amount,
+.tx-count-pill,
+.meter-label b,
+.goal-row b,
+th:where(.num),
+td:where(.num) {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Type floor ────────────────────────────────────────────────────────────
+   Nothing in the product renders below 12px except uppercase overline labels
+   and numeric count pills. Legacy sheets still set 9–11px in places; this
+   block raises them onto the scale. */
+small,
+.small {
+  font-size: var(--text-xs) !important;
+}
+
+p {
+  font-size: var(--text-base);
+}
+
+.subline,
+.range-text,
+.toolbar,
+.date-range-filter,
+.date-range-presets,
+.pie-legend-row,
+.records,
+.summary-stat,
+.drilldown-stat {
+  font-size: var(--text-sm) !important;
+}
+
+.avatar,
+.merchant-icon,
+.tx-count-pill {
+  font-size: var(--text-xs) !important;
+}
+
+.card-head small,
+.modal-head small,
+.sidebar nav section > small,
+.life-stat-top {
+  font-size: var(--text-2xs) !important;
+}
+
+/* These three are hardcoded at 11px with !important in additions.css. */
+.pill,
+.cat-badge-colored,
+.pay-badge-colored {
+  font-size: var(--text-xs) !important;
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+.shell {
+  padding: 12px !important;
+  gap: 12px !important;
+  background: var(--background) !important;
+}
+
+.sidebar {
+  width: 264px !important;
+  flex: 0 0 264px !important;
+  padding: 12px !important;
+  background: var(--sidebar) !important;
+  color: var(--sidebar-foreground) !important;
+  border: 1px solid var(--sidebar-border) !important;
+  border-radius: var(--radius-xl) !important;
+  box-shadow: none !important;
+  position: sticky;
+  top: 12px;
+  height: calc(100vh - 24px);
+  overflow: hidden;
+}
+
+.sidebar .brand {
+  padding: 6px 8px 16px !important;
+  gap: 10px !important;
+  border-bottom: 1px solid var(--sidebar-border);
+  margin-bottom: 4px;
+}
+
+.sidebar .brand b {
+  font-size: var(--text-md) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+  color: var(--sidebar-foreground) !important;
+}
+
+.sidebar .brand small {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.sidebar .brand i,
+.sidebar .brand i svg {
+  color: var(--brand) !important;
+}
+
+.sidebar nav {
+  padding: 6px 0;
+  scrollbar-width: thin;
+}
+
+.sidebar nav section {
+  margin-bottom: 16px !important;
+}
+
+.sidebar nav section > small {
+  display: block;
+  padding: 0 10px 6px !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.sidebar nav button {
+  width: 100%;
+  display: flex !important;
+  align-items: center;
+  gap: 10px !important;
+  height: var(--control-h) !important;
+  padding: 0 10px !important;
+  margin-bottom: 2px !important;
+  border-radius: var(--radius-md) !important;
+  background: transparent !important;
+  border: none;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 500 !important;
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.sidebar nav button svg {
+  color: currentColor !important;
+  flex: 0 0 auto;
+}
+
+.sidebar nav button:hover {
+  background: color-mix(in srgb, var(--sidebar-accent) 60%, transparent) !important;
+  color: var(--foreground) !important;
+}
+
+.sidebar nav button.active {
+  background: var(--sidebar-accent) !important;
+  color: var(--sidebar-accent-foreground) !important;
+  font-weight: 500 !important; /* no weight jump — the fill carries the state */
+  box-shadow: inset 0 0 0 1px var(--sidebar-border);
+}
+
+.sidebar .profile {
+  margin-top: 8px;
+  padding-top: 12px !important;
+  border-top: 1px solid var(--sidebar-border) !important;
+}
+
+.sidebar .profile b {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.sidebar .profile small {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.sidebar .avatar {
+  border-radius: var(--radius-pill) !important;
+  background: var(--brand-soft) !important;
+  color: var(--brand-soft-foreground) !important;
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────── */
+/* No chrome bar: the search floats over the page, centred, with no border. */
+main > header {
+  height: auto !important;
+  min-height: 0 !important;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 0 14px !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+main > header .hamb {
+  position: absolute;
+  left: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--muted-foreground);
+  box-shadow: var(--elevation-l1);
+}
+
+.topbar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(620px, 100%);
+  margin: 0 auto;
+}
+
+.theme-btn-single {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0 !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--card) !important;
+  color: var(--muted-foreground) !important;
+  box-shadow: var(--elevation-l1);
+}
+
+.theme-btn-single:hover {
+  color: var(--foreground) !important;
+  border-color: var(--border) !important;
+}
+
+/* Nav tabs follow the same contract as every other tab row. */
+.header-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px !important;
+  min-width: 88px;
+  justify-content: center;
+  padding: 0 10px !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.header-nav-tab:hover {
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
+}
+
+.header-nav-tab.active {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle), 0 1px 2px rgb(28 27 25 / 0.05);
+}
+
+.tab-pill-count {
+  min-width: 18px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-2xs);
+  line-height: 20px;
+  text-align: center;
+}
+
+.top-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: var(--card);
+  color: var(--muted-foreground);
+  box-shadow: var(--elevation-l1);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.search:focus-within {
+  border-color: var(--ring);
+  box-shadow: var(--elevation-l1), 0 0 0 3px var(--primary-ring);
+}
+
+.search input {
+  border: none !important;
+  background: transparent !important;
+  height: 42px !important;
+  padding: 0 !important;
+  font-size: var(--text-base);
+  color: var(--foreground);
+  width: 100%;
+  min-width: 0;
+}
+
+.search input::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* ── Segmented control (the one tab component) ─────────────────────────── */
+.seg {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+  border: 1px solid var(--border-subtle);
+}
+
+.seg-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--border-subtle), 0 1px 2px rgb(28 27 25 / 0.06);
+  transition: transform var(--duration-base) var(--ease-out), width var(--duration-base) var(--ease-out);
+  pointer-events: none;
+}
+
+.seg-item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  color: var(--muted-foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.seg-item:hover {
+  color: var(--foreground);
+}
+
+.seg-item.is-active {
+  color: var(--foreground);
+}
+
+.seg-item svg {
+  opacity: 0.85;
+}
+
+.seg-count {
+  min-width: 17px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--muted-foreground) 14%, transparent);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-2xs);
+  line-height: 19px;
+  color: var(--muted-foreground);
+}
+
+/* Legacy tab families adopt the same measurements until they are swapped. */
+.range-tabs,
+.breakdown-tabs,
+.manage-tabs-bar {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 2px !important;
+  padding: 4px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+  width: auto !important;
+}
+
+/* Inline kind switch (add-transaction row on Transactions). */
+.min-type-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 2px;
+  padding: 3px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--muted) !important;
+}
+
+.min-type-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 60px;
+  height: var(--control-h-sm) !important;
+  padding: 0 10px !important;
+  border: none !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+  overflow: visible !important;
+}
+
+.min-type-btn.is-exp {
+  background: var(--destructive-soft) !important;
+  color: var(--destructive-soft-foreground) !important;
+  box-shadow: none !important;
+}
+
+.min-type-btn.is-inc {
+  background: var(--success-soft) !important;
+  color: var(--success-soft-foreground) !important;
+  box-shadow: none !important;
+}
+
+/* Expense / income switch inside the add-transaction dialog (2-up grid). */
+.type-toggle {
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-pill) !important;
+  padding: 4px !important;
+  gap: 4px !important;
+}
+
+.type-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h-sm) !important;
+  border: none !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 500 !important;
+}
+
+.type-btn.active {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle) !important;
+}
+
+.range-tab,
+.breakdown-tab,
+.manage-tab-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h-sm) !important;
+  padding: 0 12px !important;
+  border: none !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.range-tab:hover,
+.breakdown-tab:hover,
+.manage-tab-btn:hover {
+  color: var(--foreground) !important;
+  background: transparent !important;
+}
+
+.range-tab.active,
+.breakdown-tab.active,
+.manage-tab-btn.active {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  font-weight: 500 !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle), 0 1px 2px rgb(28 27 25 / 0.06) !important;
+}
+
+/* ── Page heading (all pages share it) ─────────────────────────────────── */
+.heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px !important;
+  padding: 2px 2px 0 !important;
+}
+
+.heading > div > small {
+  display: block;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+  margin-bottom: 6px;
+}
+
+.heading h1 {
+  font-family: var(--font-display) !important;
+  font-size: 44px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em !important;
+  line-height: 1.05 !important;
+  color: var(--foreground) !important;
+  margin-bottom: 6px !important;
+}
+
+.heading p {
+  font-size: var(--text-base) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────────────── */
+.card,
+.panel {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+  padding: 20px !important;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.card-head {
+  flex-wrap: nowrap;
+}
+
+.card-head .label {
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.card-head .label,
+.card-head .label span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: -0.005em;
+}
+
+.card-head .label .ico,
+.card-head .label .round {
+  width: 26px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--muted-foreground);
+}
+
+.card .big,
+.card .balance-number {
+  font-size: var(--text-2xl) !important;
+  font-weight: 600 !important;
+  line-height: 1.05 !important;
+  letter-spacing: -0.025em;
+  color: var(--foreground);
+}
+
+/* Money is the content: the primary figure outranks everything in the card. */
+.card.balance .balance-number {
+  font-size: var(--text-num-hero) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.03em;
+}
+
+.card.income .big,
+.card.expense .big,
+.card.cashflow .big,
+.card.history .big {
+  font-size: var(--text-num-kpi) !important;
+}
+
+.card .big {
+  font-size: var(--text-2xl) !important;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: none;
+}
+
+.badge,
+.green-badge,
+.red-badge,
+.insight-badge-row span,
+.cat-badge-colored,
+.pay-badge-colored,
+.tx-count-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: none;
+}
+
+.badge,
+.green-badge {
+  background: var(--success-soft);
+  color: var(--success-soft-foreground);
+}
+
+.red-badge {
+  background: var(--destructive-soft);
+  color: var(--destructive-soft-foreground);
+}
+
+.cat-badge-colored,
+.pay-badge-colored {
+  background: var(--secondary);
+  color: var(--muted-foreground);
+}
+
+/* Category / channel chips: neutral surface + colour dot, never a pastel block.
+   The category hue arrives as an inline text colour, so the dot inherits it. */
+.cat-badge-colored {
+  background: var(--secondary) !important;
+  border: none !important;
+  padding-left: 10px !important;
+}
+
+/* Payment pills keep the inline vibrant fill + white text. */
+.pay-badge-colored {
+  border-radius: var(--radius-pill) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em;
+}
+
+/* No swatch dots — the pill itself carries the colour. */
+.cat-badge-colored,
+.pay-badge-colored {
+  gap: 0;
+}
+
+/* Meters: 2px track, no gradient. */
+.meter,
+.goal-meter,
+.goal-row > i {
+  height: 6px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--muted) !important;
+  overflow: hidden;
+}
+
+.meter > i,
+.goal-meter > i,
+.goal-row > i > em {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--brand) !important;
+}
+
+.meter-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-top: 10px;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+
+.meter-label span,
+.meter-label b {
+  white-space: nowrap;
+}
+
+.meter-label b {
+  font-size: var(--text-num);
+}
+
+.meter-label b {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.goal-dark {
+  background: var(--muted);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.goal-dark small {
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.goal-dark h3 {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 6px 0 4px;
+}
+
+.goal-dark strong {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.goal-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-base);
+}
+
+.goal-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Transactions page (same shell as every other page) ────────────────── */
+.transactions-panel {
+  display: block;
+  overflow: visible;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.transactions-frozen-header {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin-bottom: 16px;
+}
+
+.tx-top-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tx-controls-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.tx-title-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The page scrolls; the table never gets its own scrollbar. */
+.transactions-scroll-container {
+  border-radius: var(--radius-lg);
+  overflow: visible !important;
+  max-height: none !important;
+  padding: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+.table-wrap {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.table-wrap table,
+.records table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-wrap th,
+.records th {
+  height: var(--control-h);
+  padding: 0 12px;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+}
+
+.table-wrap td,
+.records td {
+  height: var(--row-h);
+  padding: 0 12px;
+  font-size: var(--text-base);
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.table-wrap tr:last-child td,
+.records tr:last-child td {
+  border-bottom: none;
+}
+
+.table-wrap tbody tr:hover td,
+.records tbody tr:hover td {
+  background: var(--accent);
+}
+
+.table-head {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  height: var(--control-h);
+  align-items: center;
+  padding: 0 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.mini-tx {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--row-h);
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-base);
+}
+
+.mini-tx:last-child {
+  border-bottom: none;
+}
+
+.mini-tx .merchant {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mini-tx .merchant b {
+  font-weight: 500;
+  font-size: var(--text-base);
+}
+
+.mini-tx .merchant small {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.mini-tx .merchant-icon {
+  width: 28px;
+  height: var(--control-h-sm);
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+/* AnimatedNumber renders a .rolling-number span inside the KPI element; it must
+   inherit the card's figure size instead of imposing its own. */
+.rolling-number {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  letter-spacing: inherit !important;
+  color: inherit;
+}
+
+.records .rolling-number,
+.mini-tx .rolling-number,
+.mini-tx .amount,
+.mini-tx strong,
+td .rolling-number {
+  font-size: var(--text-num) !important;
+  font-weight: 500 !important;
+  text-align: right;
+}
+
+.tx-count-pill {
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+}
+
+/* ── Controls ──────────────────────────────────────────────────────────── */
+input:not([type='checkbox']):not([type='radio']):not([type='range']),
+select,
+textarea {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  padding: 0 10px;
+  height: var(--control-h);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+textarea {
+  height: auto;
+  padding: 10px;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--ring);
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-label {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+
+button.blue,
+.blue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h);
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+  transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+/* Inline deltas: a soft success pill, never a filled action button. */
+.green {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--success-soft);
+  color: var(--success-soft-foreground);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.balance-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.balance-line .eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.balance-line .eye:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+button.blue:hover,
+.blue:hover {
+  background: var(--brand) !important;
+  color: var(--brand-foreground) !important;
+}
+
+.goal-dark button {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border: none !important;
+  border-radius: var(--radius-md) !important;
+  height: 34px;
+  padding: 0 12px !important;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.goal-dark button:hover,
+[data-theme='dark'] .goal-dark button:hover {
+  background: var(--brand) !important;
+  color: var(--brand-foreground) !important;
+}
+
+/* Legacy theme.css paints this CTA var(--text-muted) with a higher-specificity
+   dark rule; keep it a primary button in both themes. */
+[data-theme='dark'] .goal-dark button {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+}
+
+button.blue:active,
+.blue:active {
+  transform: translateY(0.5px);
+}
+
+button.blue svg,
+.blue svg {
+  color: currentColor;
+}
+
+.icon-btn,
+.dots,
+.circle,
+.edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.icon-btn:hover,
+.dots:hover,
+.circle:hover,
+.edit-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--brand);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.link:hover {
+  color: var(--brand-soft-foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── Select / dropdown ─────────────────────────────────────────────────── */
+.custom-select {
+  position: relative;
+  display: inline-flex;
+}
+
+.custom-select-trigger {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--control-h) !important;
+  min-width: 0;
+  padding: 0 10px !important;
+  background: var(--card) !important;
+  border: 1px solid var(--input) !important;
+  border-radius: var(--radius-md) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.custom-select-trigger:hover {
+  background: var(--accent) !important;
+}
+
+.custom-select-trigger.active,
+.custom-select-trigger[aria-expanded='true'] {
+  border-color: var(--ring) !important;
+}
+
+.custom-select-trigger .trigger-arrow {
+  color: var(--muted-foreground);
+  flex: 0 0 auto;
+}
+
+.custom-select-menu {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px !important;
+  background: var(--popover) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--elevation-l1) !important;
+  animation: menu-in var(--duration-fast) var(--ease-out);
+}
+
+.custom-select-menu.align-right {
+  left: auto;
+  right: 0;
+}
+
+.custom-select-menu.drop-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.custom-select-item {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 34px !important;
+  padding: 0 8px !important;
+  border: none;
+  border-radius: var(--radius-sm) !important;
+  background: transparent !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 400 !important;
+  text-align: left;
+}
+
+.custom-select-item.highlighted,
+.custom-select-item:hover {
+  background: var(--accent) !important;
+}
+
+.custom-select-item.selected {
+  background: var(--accent) !important;
+  font-weight: 500 !important;
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Dialogs ───────────────────────────────────────────────────────────── */
+.overlay {
+  background: rgb(20 19 18 / 0.45) !important;
+  backdrop-filter: none;
+}
+
+.modal {
+  background: var(--popover) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--elevation-l2) !important;
+  padding: 24px !important;
+  animation: dialog-in var(--duration-base) var(--ease-out);
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.modal-head small {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 4px;
+}
+
+.modal-head h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: scale(0.98) translateY(4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.manage-modal {
+  max-width: 560px;
+}
+
+.manage-add-row {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.manage-add-row input {
+  flex: 1;
+  height: var(--control-h);
+}
+
+.manage-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.manage-chip {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  height: 28px !important;
+  padding: 0 6px 0 10px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--secondary) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  border: none !important;
+}
+
+.manage-chip-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.manage-chip-del:hover {
+  background: var(--destructive-soft);
+  color: var(--destructive-soft-foreground);
+}
+
+.manage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+/* ── Insight / KPI blocks ──────────────────────────────────────────────── */
+.payment-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.payment-insight-card {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+  padding: 16px !important;
+}
+
+.insight-val {
+  font-size: 24px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em;
+}
+
+.insight-sub,
+.stat-sub,
+.insight-pct {
+  font-size: var(--text-sm) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.channel-mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-base);
+}
+
+.channel-mini-row:last-child {
+  border-bottom: none;
+}
+
+.drilldown-stat,
+.summary-stat {
+  border-radius: var(--radius-md) !important;
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+}
+
+/* ── Charts ────────────────────────────────────────────────────────────── */
+.chart-tooltip,
+.chart-tip {
+  background: var(--popover) !important;
+  color: var(--foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--elevation-l1) !important;
+  padding: 10px 12px !important;
+  min-width: 150px;
+}
+
+.chart-tooltip-label,
+.chart-tip .tip-label {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+
+.chart-tooltip-row,
+.chart-tip .tip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: var(--text-sm);
+  padding: 2px 0;
+}
+
+.chart-tooltip-row b,
+.chart-tip .tip-row b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-num);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.legend-blue,
+.legend-income-line {
+  background: var(--chart-2);
+}
+
+.legend-lime,
+.legend-expense-line {
+  background: var(--chart-1);
+}
+
+/* ── Life module (Notes / Tasks / Journal) parities ────────────────────── */
+.life-btn {
+  border-radius: var(--radius-md) !important;
+  height: 34px;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.life-btn.is-primary {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border-color: transparent !important;
+}
+
+.life-btn.is-primary:hover {
+  background: var(--brand) !important;
+  color: var(--brand-foreground) !important;
+}
+
+/* Accent rails are not part of this system (DESIGN.md · Do's and Don'ts). */
+.life-stat::before {
+  display: none !important;
+}
+
+.life-stat {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+}
+
+.life-stat-top {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  color: var(--muted-foreground) !important;
+}
+
+.life-search {
+  border-radius: var(--radius-md) !important;
+  border-color: var(--input) !important;
+}
+
+/* ── KPI split sub-blocks (income card) ────────────────────────────────── */
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.split > div,
+.split > div:last-child {
+  background: var(--muted) !important;
+  border-color: var(--border-subtle) !important;
+  box-shadow: none !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.split small {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 2px;
+}
+
+.split b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-num);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+/* ── Empty states ──────────────────────────────────────────────────────── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 36px 16px;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: var(--text-base);
+  text-align: center;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  background-clip: content-box;
+}
+
+/* ── Motion preference ─────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .seg-indicator {
+    transition: none !important;
+  }
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  main > header .hamb {
+    display: inline-flex !important;
+  }
+
+  .topbar-search {
+    padding-left: 48px;
+  }
+
+  /* Wide data tables scroll sideways instead of squashing columns. */
+  .transactions-scroll-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .shell {
+    padding: 8px !important;
+    gap: 8px !important;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    bottom: 8px;
+    height: auto;
+    width: 280px !important;
+    flex: 0 0 280px !important;
+    z-index: 50;
+    transform: translateX(calc(-100% - 16px));
+    transition: transform var(--duration-base) var(--ease-out);
+    box-shadow: var(--elevation-l2) !important;
+  }
+
+  .sidebar.show {
+    transform: translateX(0);
+  }
+
+  main > header {
+    height: 52px !important;
+    min-height: 52px;
+  }
+
+  .search input {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .header-navbar {
+    display: none;
+  }
+
+  /* The life-page tabs live in the sidebar sheet on phones; keep the search usable. */
+  main > header .seg {
+    display: none;
+  }
+
+  .top-actions {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .search {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .date-range-filter,
+  .date-range-filter button {
+    white-space: nowrap;
+  }
+
+  .card,
+  .panel {
+    padding: 16px !important;
+  }
+
+  .card .big {
+    font-size: 28px !important;
+  }
+
+  .card.income .big,
+  .card.expense .big {
+    font-size: 28px !important;
+  }
+
+  .card.balance .balance-number {
+    font-size: 36px !important;
+  }
+}
+
+/* ==========================================================================
+   Header final pass — legacy adds a card band + border, and a navy fill in
+   dark mode via [data-theme="dark"] main > header (0,2,1). Match it.
+   ========================================================================== */
+[data-theme='dark'] main > header,
+[data-theme='light'] main > header,
+main > header {
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 6px 0 16px !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-theme='dark'] .search,
+[data-theme='light'] .search {
+  background: var(--card) !important;
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: var(--elevation-l1) !important;
+}
+
+[data-theme='dark'] .theme-btn-single,
+[data-theme='light'] .theme-btn-single {
+  background: var(--card) !important;
+  border: 1px solid var(--border-subtle) !important;
+  color: var(--muted-foreground) !important;
+  box-shadow: var(--elevation-l1) !important;
+}
+
+/* Transactions toolbar must not paint a navy band in dark mode. */
+[data-theme='dark'] .transactions-frozen-header,
+[data-theme='light'] .transactions-frozen-header {
+  background: transparent !important;
+  border-bottom: none !important;
+}
+
+[data-theme='dark'] .tx-count-pill,
+[data-theme='light'] .tx-count-pill {
+  background: var(--secondary) !important;
+  border: none !important;
+  color: var(--muted-foreground) !important;
+}
+
+/* ==========================================================================
+   Consistency pass — one type family, one control height, legacy surfaces
+   repainted onto tokens (reports insights, summary tiles, toolbar).
+   ========================================================================== */
+
+/* ── 1. One family for language. Mono is reserved for figures only. ────── */
+.card-head .label,
+.card-head .label span,
+th,
+.table-head,
+.table-head span,
+small,
+.heading > div > small,
+.pill,
+.badge,
+.green-badge,
+.red-badge,
+.insight-sub,
+.insight-pct,
+.payment-insight-card small,
+.summary-stat small,
+.drilldown-stat small,
+.form-label,
+.modal-head small,
+.manage-chip,
+.life-stat-top,
+.seg-item,
+.sidebar nav button,
+.cat-badge-colored,
+.pay-badge-colored,
+.tx-count-pill + span {
+  font-family: var(--font-body) !important;
+}
+
+.insight-sub b,
+.insight-pct b {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 2. Success delta is a pill only where it belongs (the savings subline).
+      Everywhere else `.green` is just coloured text — it was painting a filled
+      block over KPI values and insight figures. ─────────────────────────── */
+.green {
+  background: none !important;
+  border: none !important;
+  height: auto;
+  padding: 0 !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  color: var(--success-soft-foreground) !important;
+}
+
+.subline .green,
+.green-delta {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  height: 26px !important;
+  padding: 0 9px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--success-soft) !important;
+  color: var(--success-soft-foreground) !important;
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm) !important;
+  font-weight: 500;
+}
+
+/* ── 3. Search: the pill owns the focus ring, never the inner input ─────── */
+.search input:focus,
+.search input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* ── 4. Secondary button (toolbar actions: Manage Tags / Close / filters) ─ */
+.soft {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h) !important;
+  padding: 0 14px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+}
+
+.soft:hover {
+  background: var(--accent) !important;
+}
+
+/* ── 5. Transactions toolbar: one height, one rhythm ────────────────────── */
+.tx-controls-area {
+  gap: 8px !important;
+}
+
+.tx-controls-area > * {
+  height: var(--control-h) !important;
+}
+
+.tx-controls-area .custom-select-trigger {
+  min-width: 120px;
+  height: var(--control-h) !important;
+  justify-content: space-between;
+}
+
+.tx-controls-area .date-range-filter button,
+.tx-controls-area .tx-tag-btn,
+.tx-controls-area .tx-toggle-btn {
+  height: var(--control-h) !important;
+  border-radius: var(--radius-md) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  padding: 0 14px !important;
+}
+
+.tx-title-area .tx-count-pill {
+  height: 26px !important;
+  font-size: var(--text-xs) !important;
+}
+
+/* ── 6. Reports summary tiles ───────────────────────────────────────────── */
+.report-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.summary-stat {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  padding: 14px 16px !important;
+  box-shadow: none !important;
+}
+
+.summary-stat small {
+  display: block;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+  margin-bottom: 6px;
+}
+
+.summary-stat b {
+  display: block;
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  font-size: 26px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--foreground);
+}
+
+.summary-stat b.green {
+  color: var(--success-soft-foreground) !important;
+}
+
+.summary-stat b.red-text {
+  color: var(--destructive-soft-foreground) !important;
+}
+
+/* ── 7. Payment Channel Insights on tokens ──────────────────────────────── */
+.payment-insights-grid {
+  gap: 12px;
+}
+
+.payment-insight-card,
+[data-theme='dark'] .payment-insight-card,
+[data-theme='light'] .payment-insight-card {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  padding: 16px !important;
+  box-shadow: none !important;
+}
+
+.payment-insight-card small,
+[data-theme='dark'] .payment-insight-card small {
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground) !important;
+}
+
+.insight-val,
+[data-theme='dark'] .insight-val {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  font-size: 26px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+  color: var(--foreground) !important;
+  background: none !important;
+  padding: 0 !important;
+  height: auto !important;
+}
+
+.insight-sub,
+[data-theme='dark'] .insight-sub {
+  font-size: var(--text-sm) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.channel-bars-list,
+[data-theme='dark'] .channel-bars-list {
+  border-top: 1px solid var(--border) !important;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.channel-mini-row,
+[data-theme='dark'] .channel-mini-row {
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 10px 12px !important;
+  margin-bottom: 8px;
+  min-height: 46px;
+}
+
+.channel-mini-row:hover,
+[data-theme='dark'] .channel-mini-row:hover {
+  background: var(--accent) !important;
+  border-color: var(--border) !important;
+}
+
+.insight-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.insight-pct,
+[data-theme='dark'] .insight-pct {
+  height: 24px !important;
+  padding: 0 9px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--secondary) !important;
+  color: var(--muted-foreground) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em;
+}
+
+/* Semantic badge keeps its green tint even inside the insight card. */
+.insight-pct.green-badge {
+  background: var(--success-soft) !important;
+  color: var(--success-soft-foreground) !important;
+}
+
+/* Money inside table cells stays monospace and tabular. */
+.table-wrap td b,
+.records td b,
+.transactions-scroll-container td b,
+td b.green,
+td b.red-text {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-num);
+  font-weight: 500;
+}
+
+/* Insight cards: text values wrap cleanly instead of colliding with the subline. */
+.payment-insight-card {
+  gap: 8px !important;
+  justify-content: flex-start !important;
+  min-height: 0 !important;
+}
+
+.insight-val {
+  font-size: 24px !important;
+  line-height: 1.2 !important;
+  margin: 0 !important;
+}
+
+.insight-sub {
+  margin-top: 2px !important;
+  line-height: 1.45 !important;
+}
+
+/* Quick-add row: every field and the save button share one height. */
+.inline-tx-form-compact .min-field input,
+.inline-tx-form-compact .min-field .custom-select-trigger,
+.inline-tx-form-compact .field-amount input {
+  height: var(--control-h) !important;
+  font-size: var(--text-sm) !important;
+}
+
+.inline-tx-form-compact .min-save-btn {
+  height: var(--control-h) !important;
+  padding: 0 16px !important;
+}
+
+.inline-tx-form-compact {
+  align-items: center;
+  gap: 8px;
+}
+
+/* Hardcoded "#fff on var(--dark)" buttons invert to white-on-white in dark
+   mode. Own the CTA colours. */
+.report button,
+.card.report button {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border: none !important;
+  border-radius: var(--radius-md) !important;
+  height: var(--control-h) !important;
+  padding: 0 16px !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+}
+
+.report button:hover,
+.card.report button:hover {
+  background: var(--brand) !important;
+  color: var(--brand-foreground) !important;
+}
+
+/* Life-module modal scrim: --dark flips to paper in dark mode. */
+.life-modal-layer {
+  background: rgb(20 19 18 / 0.55) !important;
+}
+
+/* When the label/value pair wraps, the value keeps the right edge. */
+.meter-label b {
+  margin-left: auto;
+}
+
+/* ==========================================================================
+   Transactions toolbar rhythm + minimal empty state.
+   Filters sit left, actions right, one shared height and gap.
+   ========================================================================== */
+.tx-top-toolbar {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px !important;
+  flex-wrap: wrap;
+  padding: 0 !important;
+}
+
+.tx-filters,
+.tx-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tx-actions {
+  margin-left: auto;
+}
+
+.tx-filters > *,
+.tx-actions > * {
+  height: var(--control-h) !important;
+}
+
+.tx-filters .custom-select-trigger {
+  min-width: 132px;
+}
+
+.heading-count {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  margin-left: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  vertical-align: middle;
+}
+
+/* Payment chips: same minimal pill as categories, different hue family. */
+.pay-badge-colored {
+  background: var(--secondary) !important;
+  border: none !important;
+}
+
+/* ── Empty state: no filled box, just a quiet, centred message ─────────── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 44px 24px;
+  background: transparent !important;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.empty > b {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.empty > span {
+  max-width: 46ch;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+/* Inside a table row the dashed box must not add table-cell padding. */
+td > .empty {
+  border: none;
+  padding: 36px 16px;
+}
+
+/* ── Quick-add row: a real grid instead of wrapped inline fields ───────── */
+.inline-tx-form-compact {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inline-tx-form-compact .min-type-toggle,
+.inline-tx-form-compact .min-save-btn {
+  flex: 0 0 auto;
+}
+
+.inline-tx-form-compact .min-field {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.inline-tx-form-compact .field-amount {
+  flex: 0 1 130px;
+}
+
+.inline-tx-form-compact .field-date {
+  flex: 0 0 160px;
+}
+
+.inline-tx-form-compact .min-save-btn {
+  min-width: 104px;
+}
+
+.min-type-btn {
+  min-width: 76px !important;
+  gap: 6px;
+}
+
+.min-save-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Filters row sits on its own line, actions on theirs — no ragged mixing. */
+.transactions-frozen-header {
+  display: flex !important;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Quick-add kind switch matches the field height exactly. */
+.inline-tx-form-compact .min-type-toggle {
+  height: var(--control-h) !important;
+  padding: 3px !important;
+}
+
+.inline-tx-form-compact .min-type-btn {
+  height: calc(var(--control-h) - 6px) !important;
+}
+
+/* Primary cell emphasis without shouting. */
+.transactions-scroll-container td:first-child b {
+  font-weight: 500;
+}
+
+/* A short table must not stretch the card to the viewport bottom. */
+.transactions-panel {
+  flex: 0 0 auto !important;
+  align-self: flex-start;
+  width: 100%;
+}
+
+/* The legacy panel pins itself to the viewport height; a card should fit the
+   content it has. */
+.panel.transactions-panel {
+  height: auto !important;
+  max-height: none !important;
+  padding: 20px !important;
+  overflow: hidden !important;
+  border-radius: var(--radius-lg) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--card) !important;
+  box-shadow: none !important;
+}
+
+/* Quick-add fits on one line inside the card padding. */
+.inline-tx-form-compact .min-field {
+  flex: 1 1 140px;
+}
+
+.inline-tx-form-compact .field-amount {
+  flex: 0 1 110px;
+}
+
+.inline-tx-form-compact .field-date {
+  flex: 0 0 150px;
+}
+
+.inline-tx-form-compact .min-save-btn {
+  min-width: 96px;
+}
+
+/* Six KPI tiles balance as 3 × 2 rather than 5 + 1. */
+.report-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+@media (max-width: 1024px) {
+  .report-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .report-summary {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* The floating search scrolls with the page: nothing overlaps content. */
+[data-theme='dark'] main > header,
+[data-theme='light'] main > header,
+main > header {
+  position: static !important;
+}
+
+/* Monthly summary cells: token surface in both themes (legacy had a maroon
+   tint in dark). */
+.trend-month-cell,
+[data-theme='dark'] .trend-month-cell {
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 10px 12px !important;
+}
+
+.trend-month-cell .tmc-month,
+.trend-month-cell small {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground) !important;
+}
+
+.trend-month-cell .tmc-income,
+[data-theme='dark'] .trend-month-cell .tmc-income {
+  color: var(--success-soft-foreground) !important;
+}
+
+.trend-month-cell .tmc-expense,
+[data-theme='dark'] .trend-month-cell .tmc-expense {
+  color: var(--destructive-soft-foreground) !important;
+}
+
+/* ==========================================================================
+   Global control grammar — one height, one radius, one type for every button,
+   input, select and dropdown in the product.
+   ========================================================================== */
+:root {
+  --btn-h: 40px;
+  --btn-h-sm: 32px;
+}
+
+.blue,
+.soft,
+.life-btn,
+button.blue,
+button.soft {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px;
+  height: var(--btn-h) !important;
+  min-height: var(--btn-h) !important;
+  padding: 0 16px !important;
+  border-radius: var(--radius-md) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  white-space: nowrap;
+}
+
+.life-btn.is-ghost,
+.soft {
+  border: 1px solid var(--border) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+}
+
+.icon-btn,
+.life-icon-btn,
+.dots,
+.circle,
+.edit-btn {
+  width: var(--btn-h-sm) !important;
+  height: var(--btn-h-sm) !important;
+  padding: 0 !important;
+  border-radius: var(--radius-md) !important;
+}
+
+/* Toolbar controls match the buttons they sit with. */
+.tx-filters > *,
+.tx-actions > * {
+  height: var(--btn-h) !important;
+}
+
+/* ── Dropdowns: one trigger, one menu, one row rhythm ──────────────────── */
+.custom-select-trigger {
+  height: var(--btn-h) !important;
+  padding: 0 12px !important;
+  border-radius: var(--radius-md) !important;
+  font-size: var(--text-sm) !important;
+  gap: 10px;
+}
+
+.custom-select-menu {
+  min-width: 200px;
+  padding: 6px !important;
+  border-radius: var(--radius-lg) !important;
+}
+
+.custom-select-item {
+  height: 36px !important;
+  padding: 0 10px !important;
+  gap: 12px !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: var(--text-sm) !important;
+}
+
+.custom-select-item > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-select-item .item-check,
+.custom-select-item svg {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* ── Life search == top search ─────────────────────────────────────────── */
+.life-search {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 10px;
+  height: 44px !important;
+  padding: 0 18px !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--card) !important;
+  box-shadow: var(--elevation-l1);
+  color: var(--muted-foreground);
+  min-width: 260px;
+  flex: 0 1 340px;
+}
+
+.life-search:focus-within {
+  border-color: var(--ring) !important;
+  box-shadow: var(--elevation-l1), 0 0 0 3px var(--primary-ring);
+}
+
+.life-search input {
+  flex: 1;
+  min-width: 0;
+  border: none !important;
+  background: transparent !important;
+  height: 42px !important;
+  padding: 0 !important;
+  font-size: var(--text-base) !important;
+  color: var(--foreground) !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.life-search button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+}
+
+/* ── Pills: no dots, one shape ─────────────────────────────────────────── */
+.life-chip-dot,
+.life-chip i,
+.task-cat i,
+.life-chip-row i,
+.task-prio i {
+  display: none !important;
+}
+
+.life-chip {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  height: 30px !important;
+  padding: 0 12px !important;
+  border-radius: var(--radius-pill) !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--secondary) !important;
+  color: var(--color, var(--muted-foreground)) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+}
+
+.life-chip.is-active {
+  background: var(--card) !important;
+  border-color: var(--border) !important;
+  color: var(--foreground) !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
+.life-chip b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.life-chip.is-manage {
+  margin-left: auto;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  border-style: dashed !important;
+}
+
+.life-chip.is-manage:hover {
+  color: var(--foreground) !important;
+  background: var(--accent) !important;
+}
+
+/* Pills inside rows (task category / priority) */
+.task-cat,
+.task-prio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--c, var(--muted-foreground));
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+/* ── Life form fields: label sits inside the field, value below it ─────── */
+.life-select {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  height: 56px;
+  min-width: 0;
+  padding: 8px 34px 8px 12px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.life-select > span,
+.life-select .life-field-label {
+  font-family: var(--font-body) !important;
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+  margin: 0 !important;
+  line-height: 1 !important;
+}
+
+.life-select select,
+.life-select input {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 100%;
+  height: 22px !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  font-weight: 500;
+  color: var(--foreground) !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.life-select::after {
+  content: '';
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -2px;
+  border-right: 1.5px solid var(--muted-foreground);
+  border-bottom: 1.5px solid var(--muted-foreground);
+  transform: translateY(-50%) rotate(45deg);
+  pointer-events: none;
+}
+
+.life-select:has(input[type='date'])::after {
+  display: none;
+}
+
+.life-select:focus-within {
+  border-color: var(--ring);
+}
+
+/* ── Task composer (per reference): title row, then four labelled fields ── */
+.task-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px !important;
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+}
+
+.task-composer-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-composer-main .life-input {
+  flex: 1;
+  height: 48px !important;
+  padding: 0 16px !important;
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--input) !important;
+  background: var(--card) !important;
+  font-size: var(--text-md) !important;
+  color: var(--foreground) !important;
+}
+
+.task-composer-main .life-input:focus {
+  border-color: var(--ring) !important;
+  outline: none !important;
+}
+
+.task-composer-main .life-btn {
+  height: 48px !important;
+  min-height: 48px !important;
+  padding: 0 20px !important;
+}
+
+.task-composer-grid {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 168px minmax(0, 1.5fr);
+  gap: 10px;
+  align-items: end;
+}
+
+@media (max-width: 900px) {
+  .task-composer-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .task-composer-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.task-composer .life-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ── Category manager dialog ───────────────────────────────────────────── */
+.cat-manage-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.cat-manage-add .life-input {
+  flex: 1;
+  height: var(--btn-h) !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--input) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--card) !important;
+  font-size: var(--text-sm) !important;
+}
+
+.cat-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.cat-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--muted);
+}
+
+.cat-manage-tint {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  flex: 0 0 auto;
+}
+
+.cat-manage-row .life-input {
+  flex: 1;
+  height: 36px !important;
+  padding: 0 8px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-sm) !important;
+  background: transparent !important;
+  font-size: var(--text-base) !important;
+  color: var(--foreground) !important;
+}
+
+.cat-manage-row .life-input:hover {
+  border-color: var(--border) !important;
+  background: var(--card) !important;
+}
+
+.cat-manage-row .life-input:focus {
+  border-color: var(--ring) !important;
+  background: var(--card) !important;
+  outline: none !important;
+}
+
+.cat-manage-hint {
+  margin-top: 12px;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+/* ── Transactions inline adder: quiet strip, not a card-in-card ────────── */
+.inline-add-compact-wrap {
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 8px !important;
+  box-shadow: none !important;
+  margin-top: 10px;
+}
+
+.inline-tx-form-compact .min-field input,
+.inline-tx-form-compact .min-field .custom-select-trigger,
+.inline-tx-form-compact .field-amount input,
+.inline-tx-form-compact .min-save-btn {
+  height: var(--btn-h) !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: var(--text-sm) !important;
+}
+
+.inline-tx-form-compact .min-type-toggle {
+  height: var(--btn-h) !important;
+  background: transparent !important;
+  padding: 2px !important;
+}
+
+.inline-tx-form-compact .min-type-btn {
+  height: calc(var(--btn-h) - 4px) !important;
+  min-width: 74px !important;
+}
+
+.inline-tx-form-compact .min-save-btn {
+  min-width: 92px;
+}
+
+.inline-tx-form-compact .min-field {
+  background: var(--card);
+  border-radius: var(--radius-sm);
+}
+
+/* Empty states are quiet blocks, never boxes — one pattern everywhere. */
+.empty {
+  border: none !important;
+  background: transparent !important;
+  padding: 44px 20px !important;
+}
+
+td > .empty {
+  padding: 36px 16px !important;
+}
+
+.empty > b {
+  display: block;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 2px;
+}
+
+.empty > span {
+  display: block;
+  max-width: 52ch;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+/* Composer + edit-grid fields: legacy pins them to 32px with a higher-specificity
+   selector, so the labelled field never gets its two lines. */
+.task-composer-grid .life-select,
+.task-edit-grid .life-select,
+.composer-grid .life-select {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  justify-content: center !important;
+  gap: 2px !important;
+  height: 56px !important;
+  padding: 8px 34px 8px 12px !important;
+}
+
+.task-composer-grid .life-select > span,
+.task-edit-grid .life-select > span {
+  text-align: left !important;
+  white-space: nowrap;
+}
+
+/* Hero actions stay on one line: search shrinks, the button keeps its box. */
+.life-hero {
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.life-hero-actions {
+  flex-wrap: nowrap !important;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.life-search {
+  flex: 1 1 220px !important;
+  min-width: 0 !important;
+}
+
+.life-hero-actions .life-btn {
+  flex: 0 0 auto;
+}
+
+/* Chevron only on real selects, never on a text field. */
+.life-select:not(:has(select))::after {
+  display: none !important;
+}
+
+/* Hero search keeps a search-field width instead of stretching. */
+.life-search {
+  max-width: 380px;
+}
+
+/* Life empty state matches the quiet .empty pattern (no dashed box). */
+.life-empty {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Life segmented control matches the global one. */
+.life-segmented {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 2px;
+  padding: 4px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+}
+
+.life-segmented button {
+  height: 34px !important;
+  padding: 0 14px !important;
+  border: none !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.life-segmented button.is-active {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle), 0 1px 2px rgb(28 27 25 / 0.05);
+}
+
+.life-segmented button b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+/* Date filter trigger joins the control grid. */
+.date-range-trigger {
+  height: var(--btn-h) !important;
+  padding: 0 12px !important;
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--input) !important;
+  background: var(--card) !important;
+  font-size: var(--text-sm) !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.date-range-popover {
+  border-radius: var(--radius-lg) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--elevation-l1) !important;
+  background: var(--popover) !important;
+  padding: 6px !important;
+}
+
+.date-range-presets button,
+.date-range-actions button {
+  height: 36px !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: var(--text-sm) !important;
+}
+
+.date-range-input-field,
+.date-range-custom-box input {
+  height: 36px !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: var(--text-sm) !important;
+}
+
+/* An empty list card spans the full grid row, like the table-based empties. */
+.records > .panel:has(.empty) {
+  grid-column: 1 / -1;
+}
+
+/* Chips read the tint the component passes in (--chip), neutral surface only. */
+.life-chip {
+  color: var(--chip, var(--muted-foreground)) !important;
+}
+
+.task-cat,
+.task-prio {
+  color: var(--chip, var(--muted-foreground)) !important;
+  background: var(--secondary) !important;
+}
+
+/* Composer title row uses the same control height as every other button. */
+.task-composer-main .life-input,
+.task-composer-main .life-btn {
+  height: var(--btn-h) !important;
+  min-height: var(--btn-h) !important;
+}
+
+/* Inputs and selects share the button height exactly. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not(.life-input),
+select {
+  height: var(--btn-h) !important;
+}
+
+/* ==========================================================================
+   Round 4 — dropdown widths, sort control, manage placement, goal table,
+   and a real phone layout.
+   ========================================================================== */
+
+/* Every dropdown menu is exactly as wide as the box that opened it.
+   Viewport-anchored menus get their width inline instead — 100% would resolve
+   against the viewport, not the trigger. */
+.custom-select-menu:not(.is-fixed) {
+  min-width: 100% !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.custom-select.full-width,
+.custom-select.full-width .custom-select-trigger {
+  width: 100% !important;
+}
+
+/* Sort control reads as the same dropdown as everywhere else. */
+.life-select.is-compact {
+  height: var(--btn-h) !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  padding: 0 34px 0 12px !important;
+}
+
+.life-select.is-compact > span {
+  font-size: var(--text-xs) !important;
+  letter-spacing: 0.06em !important;
+}
+
+.life-select.is-compact select {
+  width: auto !important;
+  flex: 0 0 auto;
+  font-size: var(--text-sm) !important;
+  text-align: right;
+}
+
+.life-select.is-sort {
+  min-width: 168px;
+}
+
+/* Manage sits with the pills, not pinned to the far edge. */
+.life-chip.is-manage {
+  margin-left: 4px !important;
+}
+
+/* Progress cell used by the goals table. */
+.table-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 160px;
+}
+
+.table-progress-track {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+  overflow: hidden;
+}
+
+.table-progress-track > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--brand);
+}
+
+.table-progress > span {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  min-width: 34px;
+  text-align: right;
+}
+
+/* ==========================================================================
+   PHONE LAYOUT (≤ 768px) — one column, thumb-sized controls, scroll where a
+   table cannot shrink.
+   ========================================================================== */
+@media (max-width: 768px) {
+  .shell {
+    padding: 10px 10px 24px !important;
+    gap: 0 !important;
+  }
+
+  /* Header: hamburger + full-width search + theme toggle */
+  main > header {
+    gap: 8px !important;
+    padding: 2px 0 12px !important;
+    align-items: center !important;
+  }
+
+  main > header .hamb {
+    position: static !important;
+    display: inline-flex !important;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+
+  .topbar-search {
+    width: 100% !important;
+    gap: 8px;
+  }
+
+  .search {
+    height: 44px !important;
+    padding: 0 14px !important;
+  }
+
+  .search input {
+    font-size: 15px !important;
+  }
+
+  .theme-btn-single {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+
+  /* Page heading */
+  .heading {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .heading h1 {
+    font-size: 32px !important;
+  }
+
+  .heading p {
+    font-size: 15px !important;
+  }
+
+  .heading-actions {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .heading-actions > * {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* Cards & grids */
+  .card,
+  .panel {
+    padding: 14px !important;
+  }
+
+  .grid,
+  .records,
+  .payment-insights-grid,
+  .report-summary,
+  .drilldown-stats-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  .card .big,
+  .card .balance-number {
+    font-size: 30px !important;
+  }
+
+  .card-head {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  .card .chart,
+  .recharts-responsive-container {
+    min-height: 180px;
+  }
+
+  /* Tables scroll horizontally with a min width so columns stay readable */
+  .table-wrap,
+  .transactions-scroll-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-wrap table,
+  .transactions-scroll-container table {
+    min-width: 620px;
+  }
+
+  .table-wrap th,
+  .table-wrap td,
+  .transactions-scroll-container th,
+  .transactions-scroll-container td {
+    padding: 0 10px !important;
+  }
+
+  /* Transactions toolbar: filters stacked, actions side by side */
+  .tx-top-toolbar {
+    gap: 10px !important;
+  }
+
+  .tx-filters,
+  .tx-actions {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .tx-filters > * {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  .tx-filters .custom-select-trigger,
+  .tx-filters .date-range-trigger {
+    width: 100% !important;
+  }
+
+  .tx-actions > * {
+    flex: 1 1 0;
+  }
+
+  .inline-add-compact-wrap {
+    padding: 8px !important;
+  }
+
+  .inline-tx-form-compact .min-field {
+    flex: 1 1 calc(50% - 4px) !important;
+  }
+
+  .inline-tx-form-compact .field-amount,
+  .inline-tx-form-compact .field-date,
+  .inline-tx-form-compact .min-type-btn,
+  .inline-tx-form-compact .min-save-btn {
+    flex: 1 1 calc(50% - 4px) !important;
+    min-width: 0 !important;
+  }
+
+  /* Segmented controls scroll instead of squeezing */
+  .seg,
+  .life-segmented {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .seg::-webkit-scrollbar,
+  .life-segmented::-webkit-scrollbar {
+    display: none;
+  }
+
+  .seg-item,
+  .life-segmented button {
+    flex: 0 0 auto;
+  }
+
+  /* Dialogs become bottom sheets */
+  .modal,
+  .life-modal {
+    width: calc(100vw - 20px) !important;
+    max-width: none !important;
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 18px !important;
+    border-radius: var(--radius-xl) !important;
+  }
+
+  .modal-head h2,
+  .life-modal h2 {
+    font-size: 20px !important;
+  }
+
+  .manage-modal {
+    max-width: none !important;
+  }
+
+  /* Life pages */
+  .life-hero {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    padding: 0 0 4px !important;
+  }
+
+  .life-hero h1 {
+    font-size: 32px !important;
+  }
+
+  .life-hero-actions {
+    width: 100%;
+    flex-wrap: wrap !important;
+  }
+
+  .life-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .life-stat {
+    min-height: 0 !important;
+    padding: 12px !important;
+  }
+
+  .life-chip-row {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    scrollbar-width: none;
+  }
+
+  .life-chip-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .life-chip {
+    flex: 0 0 auto;
+  }
+
+  .life-toolbar-right {
+    width: 100%;
+  }
+
+  .life-select.is-sort {
+    width: 100%;
+  }
+
+  .task-progress-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+
+  .task-composer-main {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px;
+  }
+
+  .task-composer-main .life-btn {
+    width: 100%;
+  }
+
+  .task-composer-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .task-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .task-main {
+    flex: 1 1 100%;
+    order: 2;
+  }
+
+  .task-actions {
+    margin-left: auto;
+  }
+
+  /* Payments / insights */
+  .channel-mini-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+/* Small phones */
+@media (max-width: 420px) {
+  .heading h1 { font-size: 28px !important; }
+  .task-composer-grid { grid-template-columns: 1fr !important; }
+  .tx-filters > *,
+  .inline-tx-form-compact .min-field,
+  .inline-tx-form-compact .field-amount,
+  .inline-tx-form-compact .field-date {
+    flex: 1 1 100% !important;
+  }
+  .life-stats { grid-template-columns: 1fr !important; }
+}
+
+/* Note / journal category labels: pill, no dot, no card rail. */
+.note-cat i,
+.journal-cat i {
+  display: none !important;
+}
+
+.note-cat {
+  display: inline-flex !important;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--note-tint, var(--muted-foreground)) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em !important;
+  text-transform: none !important;
+}
+
+.journal-cat {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em !important;
+  text-transform: none !important;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+}
+
+.note-card::before {
+  display: none !important;
+}
+
+/* The kind toggle is now a single button: same height as its neighbours. */
+.inline-tx-form-compact .min-type-btn {
+  height: var(--btn-h) !important;
+  min-width: 118px !important;
+  justify-content: flex-start !important;
+  padding: 0 12px !important;
+  gap: 8px;
+}
+
+.inline-tx-form-compact .min-type-btn span {
+  white-space: nowrap;
+}
+
+/* A table that only holds an empty state must not force a horizontal scroll. */
+.table-wrap:has(td .empty) table,
+.transactions-scroll-container:has(td .empty) table {
+  min-width: 0 !important;
+  width: 100%;
+}
+
+@media (max-width: 420px) {
+  /* Keep type + category side by side on small phones; only the date is full. */
+  .tx-filters > *:not(.date-range-filter) {
+    flex: 1 1 calc(50% - 4px) !important;
+    min-width: 0;
+  }
+
+  .tx-filters > .date-range-filter {
+    flex: 1 1 100% !important;
+  }
+
+  .inline-tx-form-compact .min-field,
+  .inline-tx-form-compact .field-amount,
+  .inline-tx-form-compact .field-date {
+    flex: 1 1 calc(50% - 4px) !important;
+  }
+
+  .inline-tx-form-compact .min-type-btn,
+  .inline-tx-form-compact .min-save-btn {
+    flex: 1 1 100% !important;
+  }
+}
+
+/* A scrolling chip row must not widen the page (it was forcing a 800px layout
+   viewport on phones and shrinking everything). */
+.life-chip-row {
+  width: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.life-page,
+.life-page > *,
+.task-progress-row,
+.journal-cats {
+  min-width: 0 !important;
+  max-width: 100%;
+}
+
+/* Phones: stat tiles stay 2-up and get compact. */
+@media (max-width: 768px) {
+  .life-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .life-stat {
+    padding: 10px 12px !important;
+    gap: 2px !important;
+  }
+
+  .life-stat strong {
+    font-size: 24px !important;
+    line-height: 1.1;
+  }
+
+  .life-stat small {
+    font-size: 11.5px !important;
+  }
+}
+
+@media (max-width: 340px) {
+  .life-stats {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Reports grid was pinned to a 2-column min-width track, which widened the
+   whole phone layout. */
+@media (max-width: 768px) {
+  .reports-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .report-full,
+  .report-trend-full,
+  .report-chart-panel {
+    grid-column: auto !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .report-chart-panel .card-head {
+    flex-wrap: wrap !important;
+  }
+}
+
+/* Phone KPI grid: 2-up, tighter numerals. */
+@media (max-width: 768px) {
+  .report-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .summary-stat {
+    padding: 12px !important;
+  }
+
+  .summary-stat b {
+    font-size: 20px !important;
+  }
+
+  .summary-stat small {
+    font-size: 10.5px !important;
+    letter-spacing: 0.06em !important;
+  }
+}
+
+/* Only money is monospace — the description cell is language. */
+.transactions-scroll-container td:first-child b,
+.table-wrap td:first-child b,
+.records td:first-child b {
+  font-family: var(--font-body) !important;
+  font-variant-numeric: normal;
+  font-size: var(--text-base) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0;
+}
+
+/* Disabled buttons read as disabled, not as a different colour. */
+.blue:disabled,
+.soft:disabled,
+.life-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Journal entry cards: no accent rail (DESIGN.md · Do's and Don'ts). */
+.journal-entry-card,
+.journal-entry-card:hover {
+  border-left: 1px solid var(--border-subtle) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--card) !important;
+  padding: 14px 16px !important;
+}
+
+.journal-entry-card header {
+  margin-bottom: 4px;
+}
+
+/* Small toolbar buttons keep their label on one line. */
+.life-toggle,
+.life-toolbar-right .life-btn,
+.life-toolbar-right button {
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Round 5 — life Select (app dropdown in a labelled field) + date popover.
+   ========================================================================== */
+.life-select-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.life-select-wrap.is-compact {
+  flex: 0 0 auto;
+}
+
+.life-select.as-button {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+.life-select.as-button::after {
+  display: none !important;
+}
+
+.life-select.as-button > b {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.life-select-chevron {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.life-select.as-button.is-open {
+  border-color: var(--ring);
+}
+
+.life-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 90;
+}
+
+.life-select-wrap.is-compact .life-select.as-button {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--btn-h) !important;
+  padding: 0 34px 0 12px !important;
+}
+
+.life-select-wrap.is-compact .life-select.as-button > span {
+  font-size: var(--text-xs) !important;
+  letter-spacing: 0.06em !important;
+}
+
+.life-select-wrap.is-compact .life-select.as-button > b {
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.life-select-wrap.is-sort {
+  min-width: 176px;
+}
+
+/* ── Date range popover: proper spacing and a 2-up preset grid ─────────── */
+.date-range-popover {
+  width: 340px !important;
+  padding: 14px !important;
+  border-radius: var(--radius-lg) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--popover) !important;
+  box-shadow: var(--elevation-l1) !important;
+}
+
+.popover-head {
+  display: flex !important;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px !important;
+}
+
+.popover-head small {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.popover-head > span {
+  font-size: var(--text-xs) !important;
+  color: var(--muted-foreground) !important;
+  white-space: nowrap;
+}
+
+.date-range-presets {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+}
+
+.date-range-preset-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  height: 38px !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  white-space: nowrap;
+}
+
+.date-range-preset-btn:hover {
+  background: var(--accent) !important;
+}
+
+.date-range-preset-btn.active {
+  background: var(--accent) !important;
+  border-color: var(--ring) !important;
+  font-weight: 600 !important;
+}
+
+.date-range-custom-box {
+  display: flex !important;
+  flex-direction: column;
+  gap: 10px !important;
+  margin-top: 14px !important;
+  padding: 14px 0 0 !important;
+  border: none !important;
+  border-top: 1px solid var(--border-subtle) !important;
+  background: transparent !important;
+}
+
+.date-range-custom-box > span {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.date-range-inputs-row {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+}
+
+.date-range-input-field {
+  display: flex !important;
+  flex-direction: column;
+  gap: 4px !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+.date-range-input-field > span {
+  font-family: var(--font-body) !important;
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.date-range-input-field input {
+  width: 100%;
+  height: var(--btn-h) !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--input) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--card) !important;
+  font-size: var(--text-sm) !important;
+  color: var(--foreground) !important;
+}
+
+.date-range-actions {
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+.date-range-actions button {
+  height: var(--btn-h) !important;
+  padding: 0 16px !important;
+  border-radius: var(--radius-md) !important;
+  font-size: var(--text-sm) !important;
+}
+
+/* Date fields inside a labelled life field: no inner box, indicator inline. */
+.life-select input[type='date'],
+.life-select input[type='date']:focus {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  height: 22px !important;
+  padding: 0 !important;
+  width: 100% !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-base) !important;
+  color: var(--foreground) !important;
+}
+
+.life-select input[type='date']::-webkit-calendar-picker-indicator {
+  margin: 0;
+  padding: 0;
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+.life-select input[type='date']::-webkit-datetime-edit {
+  padding: 0;
+}
+
+/* The popover was laid out as a row with a negative left offset from legacy
+   positioning, so its content spilled out of the card. */
+.date-range-popover {
+  display: flex !important;
+  flex-direction: column !important;
+  left: 0 !important;
+  right: auto !important;
+  width: 340px !important;
+  max-width: calc(100vw - 32px) !important;
+}
+
+.date-range-popover > * {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .date-range-popover {
+    width: min(340px, calc(100vw - 40px)) !important;
+  }
+}
+
+/* ==========================================================================
+   SIDEBAR — part of the page on desktop, an opaque sheet on mobile.
+   Desktop: no fill, no border, no shadow; nav items borrow the card language.
+   Mobile: card surface, right-rounded, L2 shadow, 45% scrim, scroll-locked.
+   ========================================================================== */
+.sidebar {
+  width: 248px !important;
+  flex: 0 0 248px !important;
+  padding: 6px 8px 10px 0 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  position: sticky;
+  top: 12px;
+  height: calc(100vh - 24px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 16px !important;
+  margin-bottom: 6px;
+  border: none !important;
+}
+
+.sidebar .brand i {
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: var(--radius-md) !important;
+  display: grid;
+  place-items: center;
+  background: var(--brand) !important;
+  color: var(--brand-foreground) !important;
+  box-shadow: none !important;
+}
+
+.sidebar .brand b {
+  font-family: var(--font-body) !important;
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  line-height: 1.1;
+  color: var(--foreground) !important;
+}
+
+.sidebar .brand small {
+  display: block;
+  font-family: var(--font-body) !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+  margin-top: 2px;
+}
+
+.sidebar .brand .close {
+  display: none;
+}
+
+.sidebar nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 0 0;
+  scrollbar-width: none;
+}
+
+.sidebar nav::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar nav section {
+  margin-bottom: 14px !important;
+}
+
+.sidebar nav section > small {
+  display: block;
+  padding: 0 10px 6px !important;
+  font-family: var(--font-body) !important;
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.sidebar nav button {
+  width: 100%;
+  display: flex !important;
+  align-items: center;
+  gap: 10px !important;
+  height: 40px !important;
+  padding: 0 10px !important;
+  margin-bottom: 2px !important;
+  border: none !important;
+  border-radius: var(--radius-md) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.sidebar nav button:hover {
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
+}
+
+.sidebar nav button.active {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  font-weight: 500 !important;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.sidebar .profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px 2px 0 !important;
+  border-top: 1px solid var(--border-subtle) !important;
+}
+
+.sidebar .profile .avatar {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--brand-soft) !important;
+  color: var(--brand-soft-foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.sidebar .profile b {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--foreground) !important;
+}
+
+.sidebar .profile small {
+  display: block;
+  font-size: 11.5px !important;
+  color: var(--muted-foreground) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.sidebar .profile > button {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.sidebar .profile > button:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+/* ── Mobile sheet ──────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    height: 100dvh !important;
+    width: min(84vw, 320px) !important;
+    flex: none !important;
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom)) !important;
+    background: var(--card) !important;
+    border: none !important;
+    border-right: 1px solid var(--border-subtle) !important;
+    border-radius: 0 var(--radius-xl) var(--radius-xl) 0 !important;
+    box-shadow: var(--elevation-l2) !important;
+    transform: translateX(-104%);
+    transition: transform var(--duration-slow) var(--ease-out);
+    z-index: 90;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar.show {
+    transform: translateX(0) !important;
+  }
+
+  .sidebar .brand .close {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--muted-foreground);
+  }
+
+  .sidebar nav button {
+    height: 44px !important;
+    font-size: 16px !important;
+  }
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: rgb(20 19 18 / 0.45);
+    animation: scrim-in var(--duration-base) var(--ease-out);
+  }
+
+  @keyframes scrim-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 420px) {
+  .sidebar {
+    width: min(88vw, 340px) !important;
+  }
+}
+
+/* Brand mark: the glyph must contrast with the clay tile. */
+.sidebar .brand i svg {
+  color: var(--brand-foreground) !important;
+  width: 17px;
+  height: 17px;
+}
+
+@media (max-width: 420px) {
+  .sidebar {
+    width: min(86vw, 330px) !important;
+  }
+}
+
+/* Tablet: actions keep their natural width; stretch only on phones. */
+@media (min-width: 641px) and (max-width: 768px) {
+  .heading-actions {
+    width: auto !important;
+  }
+
+  .heading-actions > * {
+    flex: 0 0 auto !important;
+  }
+}
+
+/* The dark theme paints .sidebar transparent with a theme-qualified rule
+   (0,2,1); the mobile sheet must out-rank it to stay opaque. */
+@media (max-width: 1024px) {
+  [data-theme='dark'] .sidebar,
+  [data-theme='light'] .sidebar {
+    background: var(--card) !important;
+    border: none !important;
+    border-right: 1px solid var(--border-subtle) !important;
+    border-radius: 0 var(--radius-xl) var(--radius-xl) 0 !important;
+    box-shadow: var(--elevation-l2) !important;
+  }
+
+  [data-theme='dark'] .sidebar .scrim,
+  [data-theme='light'] .sidebar .scrim {
+    background: rgb(20 19 18 / 0.45) !important;
+  }
+}
+
+/* ==========================================================================
+   FLAT SURFACES — remove the box epidemic.
+   Content surfaces are separated by tone and space, not strokes. A hairline
+   survives only where it does structural work: table headers/rows, overlays
+   and the inputs themselves. Page tone deepens one step so white panels read
+   as panels without an outline.
+   ========================================================================== */
+:root {
+  --background: #f1eee7;
+}
+
+[data-theme='dark'] {
+  --background: #121110;
+}
+
+/* Content cards: fill, radius, space — no border, no shadow. */
+.card,
+.panel,
+.payment-insight-card,
+.life-stat,
+.summary-stat {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* KPI tiles give up their container entirely. */
+.summary-stat {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* Tables keep the structure that earns it: a header rule and row rules. */
+.table-wrap th,
+.records th,
+.transactions-scroll-container th {
+  border-bottom: 1px solid var(--border) !important;
+}
+
+.table-wrap td,
+.records td,
+.transactions-scroll-container td {
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+/* Inner blocks: tone only. */
+.split > div,
+.channel-mini-row,
+.cat-manage-row,
+.trend-month-cell {
+  border-color: transparent !important;
+}
+
+/* More air where the outlines used to be. */
+.grid,
+.records,
+.payment-insights-grid,
+.life-stats {
+  gap: 18px !important;
+}
+
+.card,
+.panel {
+  padding: 22px !important;
+}
+
+/* Overlays keep their edge — they float, so they need one. */
+.modal,
+.life-modal,
+.custom-select-menu,
+.date-range-popover,
+.life-select-menu {
+  border: 1px solid var(--border) !important;
+}
+
+/* Refinements after dropping the outlines */
+.dashboard-grid,
+.grid {
+  align-items: start;
+}
+
+/* Table headers: no band, just a rule. */
+.table-wrap th,
+.records th,
+.transactions-scroll-container th {
+  background: transparent !important;
+}
+
+/* Stat tile labels are ink; only the icon carries the tint. */
+.life-stat-top > span {
+  color: var(--muted-foreground) !important;
+}
+
+.life-stat-top i {
+  color: var(--tile, var(--muted-foreground)) !important;
+  opacity: 0.9;
+}
+
+/* Border is now a switch: --card-edge is transparent by default. Change that
+   one token to rgb(28 27 25 / 0.06) for a subtle outline everywhere. */
+.card,
+.panel,
+.payment-insight-card,
+.life-stat {
+  border: 1px solid var(--card-edge) !important;
+}
+
+/* Quieter status badges. */
+.badge,
+.green-badge,
+.red-badge {
+  text-transform: none !important;
+  letter-spacing: 0.01em !important;
+  font-size: var(--text-xs) !important;
+  height: 24px !important;
+  padding: 0 10px !important;
+}
+
+/* ==========================================================================
+   DASHBOARD GRID — deliberate rows, equal heights, no row spans.
+   ========================================================================== */
+.grid {
+  display: grid !important;
+  grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+  gap: 18px !important;
+  align-items: stretch;
+}
+
+.grid > .card.balance { grid-column: 1 / span 6 !important; grid-row: auto !important; min-height: 232px; }
+.grid > .card.income { grid-column: 7 / span 3 !important; grid-row: auto !important; min-height: 232px; }
+.grid > .card.expense { grid-column: 10 / span 3 !important; grid-row: auto !important; min-height: 232px; }
+.grid > .card.cashflow { grid-column: 1 / span 7 !important; grid-row: auto !important; min-height: 344px; }
+.grid > .card.goals { grid-column: 8 / span 5 !important; grid-row: auto !important; min-height: 344px; }
+.grid > .card.history { grid-column: 1 / span 8 !important; grid-row: auto !important; min-height: 320px; }
+.grid > .card.budget { grid-column: 9 / span 4 !important; grid-row: auto !important; min-height: 320px; }
+.grid > .card.networth { grid-column: 1 / span 6 !important; grid-row: auto !important; min-height: 212px; }
+.grid > .card.report { grid-column: 7 / span 6 !important; grid-row: auto !important; min-height: 212px; }
+
+@media (max-width: 1024px) {
+  .grid { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+  .grid > .card.balance,
+  .grid > .card.cashflow,
+  .grid > .card.goals,
+  .grid > .card.history,
+  .grid > .card.budget,
+  .grid > .card.networth,
+  .grid > .card.report {
+    grid-column: 1 / -1 !important;
+    min-height: 0;
+  }
+  .grid > .card.income { grid-column: 1 / span 3 !important; }
+  .grid > .card.expense { grid-column: 4 / span 3 !important; }
+}
+
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr !important; }
+  .grid > .card { grid-column: 1 / -1 !important; min-height: 0; }
+}
+
+/* ==========================================================================
+   HOVER — the edge appears on contact, nothing else moves.
+   ========================================================================== */
+:root {
+  --hover-edge: rgb(28 27 25 / 0.10);
+  --hover-wash: rgb(28 27 25 / 0.035);
+}
+
+[data-theme='dark'] {
+  --hover-edge: rgb(255 255 255 / 0.12);
+  --hover-wash: rgb(255 255 255 / 0.05);
+}
+
+.card,
+.panel,
+.life-stat,
+.payment-insight-card,
+.note-card,
+.task-row,
+.journal-entry-card,
+.mini-tx,
+.life-chip,
+.icon-btn,
+.life-icon-btn,
+.custom-select-trigger,
+.date-range-trigger {
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+
+.card:hover,
+.panel:hover {
+  border-color: var(--hover-edge) !important;
+}
+
+.table-wrap tbody tr:hover td,
+.records tbody tr:hover td,
+.transactions-scroll-container tbody tr:hover td {
+  background: var(--hover-wash) !important;
+}
+
+.note-card:hover,
+.task-row:hover,
+.journal-entry-card:hover,
+.mini-tx:hover,
+.channel-mini-row:hover,
+.clickable-category-row:hover td {
+  background: var(--hover-wash) !important;
+  border-color: var(--hover-edge) !important;
+}
+
+.life-chip:hover,
+.seg-item:hover,
+.life-segmented button:hover {
+  background: var(--accent) !important;
+  border-color: var(--hover-edge) !important;
+}
+
+.icon-btn:hover,
+.life-icon-btn:hover {
+  background: var(--accent) !important;
+  border-color: var(--hover-edge) !important;
+}
+
+/* ==========================================================================
+   GLOBAL SEARCH
+   ========================================================================== */
+.gsearch {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+.gsearch .search {
+  width: 100%;
+}
+
+.gsearch .search input {
+  flex: 1;
+}
+
+.gsearch-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+}
+
+.gsearch-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  padding: 8px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elevation-l2);
+  max-height: min(62vh, 540px);
+  overflow-y: auto;
+  animation: gsearch-in 120ms var(--ease-out);
+}
+
+@keyframes gsearch-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.gsearch-group {
+  margin-bottom: 4px;
+}
+
+.gsearch-group header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 6px;
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.gsearch-group header b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.gsearch-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+}
+
+.gsearch-item.is-active {
+  background: var(--accent);
+  border-color: var(--hover-edge);
+}
+
+.gsearch-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  flex: 0 0 auto;
+}
+
+.gsearch-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.gsearch-text b {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gsearch-text small {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gsearch-meta {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.gsearch-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 30px 16px;
+  text-align: center;
+}
+
+.gsearch-empty b {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.gsearch-empty span {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+
+.gsearch-foot {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+  padding: 8px 10px 2px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.gsearch-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+@media (max-width: 768px) {
+  .gsearch-panel {
+    position: fixed;
+    top: 64px;
+    left: 10px;
+    right: 10px;
+    max-height: calc(100dvh - 90px);
+  }
+}
+
+/* Explicit placement so DOM order can never shuffle the dashboard. */
+.grid > .card.balance   { grid-area: 1 / 1 / 2 / 7 !important; }
+.grid > .card.income    { grid-area: 1 / 7 / 2 / 10 !important; }
+.grid > .card.expense   { grid-area: 1 / 10 / 2 / 13 !important; }
+.grid > .card.cashflow  { grid-area: 2 / 1 / 3 / 8 !important; }
+.grid > .card.goals     { grid-area: 2 / 8 / 3 / 13 !important; }
+.grid > .card.history   { grid-area: 3 / 1 / 4 / 9 !important; }
+.grid > .card.budget    { grid-area: 3 / 9 / 4 / 13 !important; }
+.grid > .card.networth  { grid-area: 4 / 1 / 5 / 7 !important; }
+.grid > .card.report    { grid-area: 4 / 7 / 5 / 13 !important; }
+
+@media (max-width: 1024px) {
+  .grid > .card.balance,
+  .grid > .card.cashflow,
+  .grid > .card.goals,
+  .grid > .card.history,
+  .grid > .card.budget,
+  .grid > .card.networth,
+  .grid > .card.report {
+    grid-area: auto / 1 / auto / -1 !important;
+  }
+  .grid > .card.income { grid-area: auto / 1 / auto / 4 !important; }
+  .grid > .card.expense { grid-area: auto / 4 / auto / 7 !important; }
+}
+
+@media (max-width: 640px) {
+  .grid > .card { grid-area: auto / 1 / auto / -1 !important; }
+}
+
+.meter-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 10px;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+
+/* Goals block fills its card instead of leaving a void. */
+.card.goals {
+  display: flex;
+  flex-direction: column;
+}
+
+.card.goals .goal-dark {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.card.goals .goal-dark button {
+  align-self: flex-start;
+}
+
+/* Phone: every card full width — the explicit 6-col placement above has higher
+   specificity than a bare `.grid > .card`, so name the two offenders. */
+@media (max-width: 640px) {
+  .grid > .card.income,
+  .grid > .card.expense,
+  .grid > .card.balance,
+  .grid > .card.cashflow,
+  .grid > .card.goals,
+  .grid > .card.history,
+  .grid > .card.budget,
+  .grid > .card.networth,
+  .grid > .card.report {
+    grid-area: auto / 1 / auto / -1 !important;
+  }
+}
+
+/* ==========================================================================
+   DASHBOARD — v3: three KPIs, then two rows of three equal cards.
+   ========================================================================== */
+.grid > .card.goals    { grid-area: 2 / 1 / 3 / 5 !important; min-height: 372px; }
+.grid > .card.cashflow { grid-area: 2 / 5 / 3 / 9 !important; min-height: 372px; }
+.grid > .card.history  { grid-area: 2 / 9 / 3 / 13 !important; min-height: 372px; }
+.grid > .card.budget   { grid-area: 3 / 1 / 4 / 5 !important; min-height: 250px; }
+.grid > .card.networth { grid-area: 3 / 5 / 4 / 9 !important; min-height: 250px; }
+.grid > .card.report   { grid-area: 3 / 9 / 4 / 13 !important; min-height: 250px; }
+
+@media (max-width: 1024px) {
+  .grid > .card.goals,
+  .grid > .card.cashflow,
+  .grid > .card.history,
+  .grid > .card.budget,
+  .grid > .card.networth,
+  .grid > .card.report {
+    grid-area: auto / 1 / auto / -1 !important;
+    min-height: 0;
+  }
+}
+
+/* The chart card runs narrower now — tighten its chrome. */
+.card.cashflow .chart {
+  min-height: 200px;
+}
+
+.card.cashflow .legend {
+  margin-top: 2px;
+}
+
+/* Recent activity in a 4-col card: truncate, never wrap. */
+.card.history .mini-tx {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+}
+
+.card.history .mini-tx > :last-child {
+  display: none;
+}
+
+.card.history .merchant b,
+.card.history .merchant small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Recent activity: two columns, no METHOD label. */
+.card.history .table-head {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+}
+
+.card.history .table-head span:last-child {
+  display: none;
+}
+
+/* ==========================================================================
+   TRANSACTIONS — the page does not scroll; the table does.
+   Desktop only: on a phone an inner scroller fights the browser.
+   ========================================================================== */
+@media (min-width: 1025px) {
+  .shell {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  main {
+    min-height: 0;
+  }
+
+  .content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .content:has(.transactions-panel) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .content:has(.transactions-panel) > .heading {
+    flex: 0 0 auto;
+  }
+
+  .panel.transactions-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  .transactions-panel .transactions-frozen-header {
+    flex: 0 0 auto;
+  }
+
+  .transactions-scroll-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto !important;
+    overflow-x: auto !important;
+    overscroll-behavior: contain;
+  }
+
+  /* Header row travels with the scroll. */
+  .transactions-scroll-container thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--card);
+    box-shadow: inset 0 -1px 0 var(--border);
+  }
+
+  .transactions-scroll-container::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+}
+
+/* The goals card shares the row height, but its inner block should not stretch
+   into a giant empty slab. */
+.card.goals .goal-dark {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+/* Earlier rules pinned the panel and its scroller to content height; inside the
+   fixed-height shell they must be allowed to shrink and scroll. */
+@media (min-width: 1025px) {
+  .content:has(.transactions-panel) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .panel.transactions-panel {
+    flex: 1 1 auto !important;
+    align-self: stretch !important;
+    max-height: 100%;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .transactions-scroll-container {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* Empty goals card: let the invitation fill the space instead of leaving a gap. */
+.card.goals.is-empty .goal-dark {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+/* ==========================================================================
+   THEME PARITY — legacy sheets paint the dark theme navy and blue.
+   Everything below re-points those surfaces at the same tokens light mode
+   uses, so a control has one look in both themes.
+   ========================================================================== */
+
+/* Sidebar: not a surface in either theme. */
+[data-theme='dark'] .sidebar,
+[data-theme='light'] .sidebar {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme='dark'] .sidebar nav button,
+[data-theme='dark'] .sidebar nav button svg {
+  color: var(--muted-foreground) !important;
+}
+
+[data-theme='dark'] .sidebar nav button:hover {
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
+}
+
+[data-theme='dark'] .sidebar nav button:hover svg {
+  color: var(--foreground) !important;
+}
+
+[data-theme='dark'] .sidebar nav button.active {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  border: none !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+}
+
+[data-theme='dark'] .sidebar nav button.active svg {
+  color: var(--foreground) !important;
+}
+
+[data-theme='dark'] .sidebar .brand b {
+  color: var(--foreground) !important;
+}
+
+[data-theme='dark'] .sidebar .brand small,
+[data-theme='dark'] .sidebar nav section > small {
+  color: var(--muted-foreground) !important;
+}
+
+[data-theme='dark'] .profile {
+  border-top-color: var(--border-subtle) !important;
+}
+
+/* Dropdowns: same trigger, same menu, same items in both themes. */
+[data-theme='dark'] .custom-select-trigger,
+[data-theme='light'] .custom-select-trigger {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--foreground) !important;
+  box-shadow: none !important;
+}
+
+[data-theme='dark'] .custom-select-trigger:hover,
+[data-theme='light'] .custom-select-trigger:hover {
+  border-color: var(--hover-edge) !important;
+}
+
+[data-theme='dark'] .custom-select-menu,
+[data-theme='light'] .custom-select-menu {
+  background: var(--popover) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--elevation-l2) !important;
+  border-radius: var(--radius-xl) !important;
+  padding: 6px !important;
+}
+
+[data-theme='dark'] .custom-select-item,
+[data-theme='light'] .custom-select-item {
+  color: var(--foreground) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+[data-theme='dark'] .custom-select-item:hover,
+[data-theme='dark'] .custom-select-item.highlighted,
+[data-theme='light'] .custom-select-item:hover,
+[data-theme='light'] .custom-select-item.highlighted {
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
+}
+
+[data-theme='dark'] .custom-select-item.selected,
+[data-theme='light'] .custom-select-item.selected {
+  background: var(--secondary) !important;
+  color: var(--foreground) !important;
+  font-weight: 500 !important;
+}
+
+/* Same for the month/date popovers and any native control chrome. */
+[data-theme='dark'] input,
+[data-theme='dark'] select,
+[data-theme='dark'] textarea {
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+   APP SHELL — the document never scrolls. Header, content and footer are
+   rows of one column; only the content row scrolls.
+   ========================================================================== */
+.shell {
+  display: grid !important;
+  grid-template-columns: 248px minmax(0, 1fr) !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  overflow: hidden !important;
+}
+
+main {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  gap: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+main > header {
+  flex: 0 0 auto !important;
+}
+
+.content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-gutter: stable;
+}
+
+.page-footer {
+  position: static !important;
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+  padding: 12px 0 4px !important;
+}
+
+@media (max-width: 1024px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* ==========================================================================
+   LIST TABLES — the tasks-row language, applied to every table page.
+   Overline header, hairline separators, no zebra, no vertical rules.
+   ========================================================================== */
+.table-wrap {
+  scrollbar-gutter: stable both-edges;
+}
+
+.table-wrap table,
+.table-wrap thead,
+.table-wrap tbody {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.table-wrap thead th {
+  height: 40px;
+  padding: 0 12px;
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  background: transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-wrap tbody td {
+  height: 56px;
+  padding: 0 12px;
+  font-size: 15px;
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-wrap tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table-wrap tbody tr:hover td {
+  background: var(--hover-wash) !important;
+}
+
+/* Money columns: mono, tabular, right-aligned. */
+.table-wrap tbody td.num,
+.table-wrap tbody td:has(> .amount) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.table-wrap tbody td b {
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   CATEGORY COLOUR — the hue is derived from the name, so any category the
+   user invents is coloured the moment it exists. 14 anchors cover the wheel;
+   shades are theme-aware because the colour lives in CSS, not inline.
+   ========================================================================== */
+.cat-badge-colored,
+.manage-chip,
+.mini-icon,
+.cat-pill {
+  background: hsl(var(--cat-h, 30) 58% 93%) !important;
+  color: hsl(var(--cat-h, 30) 42% 32%) !important;
+  border: 1px solid hsl(var(--cat-h, 30) 45% 85%) !important;
+}
+
+[data-theme='dark'] .cat-badge-colored,
+[data-theme='dark'] .manage-chip,
+[data-theme='dark'] .mini-icon,
+[data-theme='dark'] .cat-pill {
+  background: hsl(var(--cat-h, 30) 32% 19%) !important;
+  color: hsl(var(--cat-h, 30) 62% 76%) !important;
+  border: 1px solid hsl(var(--cat-h, 30) 30% 29%) !important;
+}
+
+/* Viewport-anchored dropdowns escape scrolling modals and clipped cells. */
+.custom-select-menu.is-fixed {
+  position: fixed !important;
+  z-index: 2000 !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Legacy sheets tint the chosen item blue; the chosen item is a tone, not a hue. */
+[data-theme='dark'] .custom-select-item.selected,
+[data-theme='light'] .custom-select-item.selected,
+[data-theme='dark'] .custom-select-item.selected.highlighted,
+[data-theme='light'] .custom-select-item.selected.highlighted,
+.custom-select-item.selected.highlighted {
+  background: var(--secondary) !important;
+  color: var(--foreground) !important;
+}
+
+[data-theme='dark'] .custom-select-item.selected .item-check,
+[data-theme='light'] .custom-select-item.selected .item-check {
+  color: var(--primary) !important;
+}
+
+/* ==========================================================================
+   TRANSACTIONS TABLE — fixed geometry. Changing the period changes the rows,
+   never the column positions: widths are percentages of the container, and
+   the scroller reserves its gutter so a scrollbar appearing cannot reflow it.
+   ========================================================================== */
+.transactions-scroll-container {
+  scrollbar-gutter: stable both-edges;
+}
+
+.transactions-scroll-container table {
+  table-layout: fixed !important;
+  width: 100% !important;
+}
+
+.transactions-scroll-container thead th:nth-child(1) { width: 32%; }
+.transactions-scroll-container thead th:nth-child(2) { width: 18%; }
+.transactions-scroll-container thead th:nth-child(3) { width: 14%; }
+.transactions-scroll-container thead th:nth-child(4) { width: 12%; }
+.transactions-scroll-container thead th:nth-child(5) { width: 16%; }
+.transactions-scroll-container thead th:nth-child(6) { width: 8%; }
+
+.transactions-scroll-container tbody td {
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transactions-scroll-container tbody td:nth-child(5) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Quiet scrollbars — a hairline thumb, no track chrome. */
+.transactions-scroll-container,
+.table-wrap,
+.content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong, var(--border)) transparent;
+}
+
+.transactions-scroll-container::-webkit-scrollbar,
+.table-wrap::-webkit-scrollbar,
+.content::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.transactions-scroll-container::-webkit-scrollbar-track,
+.table-wrap::-webkit-scrollbar-track,
+.content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.transactions-scroll-container::-webkit-scrollbar-thumb,
+.table-wrap::-webkit-scrollbar-thumb,
+.content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+.transactions-scroll-container::-webkit-scrollbar-thumb:hover,
+.table-wrap::-webkit-scrollbar-thumb:hover,
+.content::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+  background-clip: content-box;
+}
+
+/* Single gutter on the right; both-edges shifted the table off-centre. */
+.transactions-scroll-container,
+.table-wrap {
+  scrollbar-gutter: stable;
+}
+
+.transactions-scroll-container .row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* Phone: chip rows wrap instead of running off the edge. */
+@media (max-width: 768px) {
+  .life-chip-row,
+  .chip-row,
+  .tx-filters {
+    flex-wrap: wrap !important;
+    overflow-x: visible !important;
+  }
+}
+
+/* Action cells: never truncate the buttons. */
+.table-wrap tbody td:last-child {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Sticky table heads must be opaque — rows scroll underneath, not through.
+   ========================================================================== */
+.transactions-scroll-container thead th,
+.table-wrap thead th {
+  background: var(--card) !important;
+}
+
+.transactions-scroll-container thead th {
+  position: sticky !important;
+  top: 0;
+  z-index: 4;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+/* Footer: transparent, no rule. It is a caption, not a bar. */
+.page-footer,
+[data-theme='dark'] .page-footer {
+  background: transparent !important;
+  border: none !important;
+  border-top: none !important;
+  box-shadow: none !important;
+  margin-top: 0 !important;
+  padding: 10px 0 2px !important;
+}
+
+/* The amount column header follows its figures. */
+.transactions-scroll-container thead th:nth-child(5) {
+  text-align: right;
+}
+
+/* Phone: the inline adder becomes a two-column form instead of a ragged wrap. */
+@media (max-width: 640px) {
+  .inline-tx-form-compact {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+
+  .inline-tx-form-compact .min-type-toggle,
+  .inline-tx-form-compact .field-amount,
+  .inline-tx-form-compact .field-category,
+  .inline-tx-form-compact .field-desc,
+  .inline-tx-form-compact .field-payment,
+  .inline-tx-form-compact .field-date,
+  .inline-tx-form-compact .min-save-btn {
+    flex: none !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .inline-tx-form-compact .min-type-toggle { grid-column: 1 !important; }
+  .inline-tx-form-compact .field-amount { grid-column: 2 !important; }
+  .inline-tx-form-compact .field-category,
+  .inline-tx-form-compact .field-desc { grid-column: 1 / -1 !important; }
+  .inline-tx-form-compact .field-payment { grid-column: 1 !important; }
+  .inline-tx-form-compact .field-date { grid-column: 2 !important; }
+  .inline-tx-form-compact .min-save-btn { grid-column: 1 / -1 !important; }
+}
+
+/* Dropdown rhythm: 36px rows, 6px padding — a menu never exceeds ~8 rows. */
+.custom-select-menu.is-fixed {
+  padding: 6px !important;
+}
+
+.custom-select-menu .custom-select-item,
+.custom-select-menu.is-fixed .custom-select-item {
+  height: 36px !important;
+  min-height: 36px !important;
+}
+
+/* ==========================================================================
+   Placement is computed in JS for anchored menus. The legacy `.align-right`
+   and `.drop-up` helpers pinned them to the viewport edge (`right: 0`), which
+   is what threw the filter menus 700px across the page. They only apply to
+   menus still positioned inside their wrapper.
+   ========================================================================== */
+.custom-select-menu.is-fixed,
+.custom-select-menu.is-fixed.align-right,
+.custom-select-menu.is-fixed.drop-up {
+  left: auto;
+  right: auto;
+}
+
+.custom-select-menu.is-fixed.align-right,
+.custom-select-menu.is-fixed.drop-up {
+  left: unset;
+  right: unset;
+}
+
+.custom-select-menu.align-right:not(.is-fixed) {
+  left: auto !important;
+  right: 0 !important;
+}
+
+.custom-select-menu.drop-up:not(.is-fixed) {
+  top: auto !important;
+  bottom: calc(100% + 6px) !important;
+}
+
+/* Anchored menu geometry is carried in custom properties so no legacy
+   `.align-right` / `.drop-up` rule can pin it to the viewport edge. */
+.custom-select-menu.is-fixed {
+  position: fixed !important;
+  left: var(--menu-left) !important;
+  right: auto !important;
+  top: var(--menu-top, auto) !important;
+  bottom: var(--menu-bottom, auto) !important;
+  width: var(--menu-w) !important;
+  min-width: var(--menu-w) !important;
+  max-width: var(--menu-w) !important;
+  max-height: var(--menu-maxh) !important;
+  z-index: 3000 !important;
+}
+
+/* ==========================================================================
+   DATE RANGE PANEL — anchored to its trigger, clamped inside the viewport.
+   ========================================================================== */
+.date-range-popover.is-anchored {
+  position: fixed !important;
+  left: var(--drp-left) !important;
+  right: auto !important;
+  top: var(--drp-top, auto) !important;
+  bottom: var(--drp-bottom, auto) !important;
+  width: var(--drp-w) !important;
+  max-width: var(--drp-w) !important;
+  max-height: var(--drp-maxh, 560px) !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  z-index: 3000 !important;
+}
+
+/* The page gutter is outside the scrollbar, so add breathing room inside it. */
+.content {
+  padding-right: 8px;
+}
+
+@media (max-width: 768px) {
+  .content {
+    padding-right: 4px;
+  }
+}
+
+/* Journal entry rows: same row grammar as tasks, with a date marker. */
+.journal-rows {
+  gap: 26px;
+}
+
+.journal-row {
+  cursor: pointer;
+}
+
+.journal-day {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  /* Optical centering: digit ink sits high in its line box, so trim 1px off the bottom. */
+  padding: 0 0 1px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--chip, var(--muted-foreground)) 14%, transparent);
+  color: color-mix(in srgb, var(--chip, var(--muted-foreground)) 72%, var(--foreground));
+  line-height: 1;
+}
+
+.journal-day b {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Uppercase overline label: exempt from the 12px type floor (see line 65). */
+.journal-day small {
+  font-size: 10px !important;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.task-tag,
+.task-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+}
+
+/* Net cash flow per channel, as a card. */
+.channel-net-card {
+  min-width: 0;
+}
+
+.channel-net-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.channel-net-row {
+  display: grid;
+  grid-template-columns: minmax(0, 84px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  text-align: left;
+}
+
+.channel-net-name {
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-net-track {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  overflow: hidden;
+}
+
+.channel-net-track i {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.channel-net-track i.is-pos { background: var(--chart-2); }
+.channel-net-track i.is-neg { background: var(--chart-1); }
+
+.channel-net-row b {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.channel-net-row b.is-pos { color: var(--chart-2); }
+.channel-net-row b.is-neg { color: var(--chart-1); }
+
+.legend-total {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+  padding-left: 8px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+/* Five insight cards sit on one row; the net-flow card keeps a usable width
+   when the grid folds to three or two columns. */
+.report-full .payment-insights-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+}
+
+@media (max-width: 1360px) {
+  .report-full .payment-insights-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+  .report-full .payment-insights-grid .channel-net-card {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 900px) {
+  .report-full .payment-insights-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .report-full .payment-insights-grid .channel-net-card {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 560px) {
+  .report-full .payment-insights-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .report-full .payment-insights-grid .channel-net-card {
+    grid-column: span 1;
+  }
+}
+
+/* One column in the five-up row; two-up only when the card is wide. */
+.report-full .payment-insights-grid .channel-net-card .channel-net-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 20px;
+}
+
+@media (max-width: 1360px) {
+  .report-full .payment-insights-grid .channel-net-card .channel-net-list {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+}
+
+/* Net-flow rows: the value never runs past the card edge. */
+.channel-net-row {
+  grid-template-columns: minmax(0, 68px) minmax(20px, 1fr) auto !important;
+  gap: 6px !important;
+}
+
+.channel-net-row b {
+  font-size: 11px !important;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-net-name {
+  font-size: 11px !important;
+}
+
+/* Phone: segmented controls scroll sideways instead of clipping. */
+@media (max-width: 768px) {
+  .seg {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .seg::-webkit-scrollbar {
+    display: none;
+  }
+
+  .seg-item {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+/* The wordmark is one mark in both places: clay tile, light rupee, lowercase
+   name. The auth screen previously drew a pale tile that read as a placeholder. */
+.auth-left .brand,
+.auth-left .brand b {
+  font-family: var(--font-body) !important;
+}
+
+.auth-left .brand i {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: var(--radius-md) !important;
+  display: grid;
+  place-items: center;
+  background: var(--brand) !important;
+  color: var(--brand-foreground) !important;
+  box-shadow: none !important;
+}
+
+.auth-left .brand i svg {
+  width: 17px;
+  height: 17px;
+  color: var(--brand-foreground) !important;
+}
+
+.auth-left .brand b {
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--foreground) !important;
+}
+
+/* ==========================================================================
+   PROJECT VIEW — a category opened as its own workspace: progress, quick add,
+   filters and order on one toolbar, then the same rows as the main list.
+   ========================================================================== */
+.project-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.project-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.project-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 260px;
+}
+
+.project-progress span {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.project-progress span b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.project-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-confirm-text {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+
+.link.is-quiet {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.link.is-quiet:hover {
+  color: var(--danger, var(--chart-1));
+  border-bottom-color: currentColor;
+}
+
+.project-quickadd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-quickadd .life-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h);
+}
+
+.project-quickadd .life-btn {
+  flex: 0 0 auto;
+  height: var(--control-h);
+}
+
+.project-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.project-toolbar .is-sort {
+  flex: 0 0 auto;
+}
+
+.project-list {
+  gap: 0;
+}
+
+.project-list .task-row {
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+.project-list .task-row:last-child {
+  border-bottom: none;
+}
+
+/* Danger button for destructive project actions. */
+.life-btn.is-danger {
+  background: color-mix(in srgb, var(--chart-1) 14%, transparent);
+  color: var(--chart-1);
+  border: 1px solid color-mix(in srgb, var(--chart-1) 32%, transparent);
+}
+
+.life-btn.is-danger:hover {
+  background: color-mix(in srgb, var(--chart-1) 22%, transparent);
+}
+
+@media (max-width: 780px) {
+  .project-progress {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .project-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* Priority and status pills read as text, not as a wash: blend the tint with
+   the foreground so "MEDIUM" stays legible on paper-white. */
+.task-prio,
+.task-cat {
+  color: color-mix(in srgb, var(--chip, var(--muted-foreground)) 74%, var(--foreground)) !important;
+}
+
+[data-theme='dark'] .task-prio,
+[data-theme='dark'] .task-cat {
+  color: color-mix(in srgb, var(--chip, var(--muted-foreground)) 82%, #ffffff) !important;
+}
+
+/* Phone: keep the row one line — check, text, priority — instead of the old
+   wrap that pushed the priority pill above the title. Editing happens by
+   tapping the row, so the hover actions go away on touch. */
+@media (max-width: 768px) {
+  .task-row {
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+    align-items: center;
+    flex-wrap: nowrap !important;
+    gap: 10px !important;
+  }
+
+  .task-row .task-main {
+    order: 0 !important;
+    flex: 1 1 auto !important;
+    grid-column: 2;
+  }
+
+  .task-row .task-prio {
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .task-row .task-actions {
+    display: none !important;
+  }
+
+  /* Filter tabs wrap onto a second line instead of clipping the last label. */
+  .life-segmented {
+    max-width: 100%;
+    flex-wrap: wrap !important;
+    overflow: visible !important;
+    row-gap: 4px;
+  }
+
+  .life-segmented button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+/* ==========================================================================
+   BRAND KIT v2 — cobalt infinity mark, Space Grotesk wordmark.
+   The symbol is a solid silhouette, so it is painted with a CSS mask: the
+   mark takes its colour from the theme instead of shipping a file per mode.
+   ========================================================================== */
+
+.sidebar .brand i.brand-tile,
+.auth-left .brand i.brand-tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: var(--brand-tile, #071ef8) !important;
+  color: var(--brand-tile-foreground, #fff) !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.sidebar .brand i.brand-tile {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 9px !important;
+}
+
+.auth-left .brand i.brand-tile {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 11px !important;
+}
+
+.brand-glyph {
+  display: block;
+  width: 78%;
+  height: 78%;
+  background: var(--brand-tile-foreground, #fff);
+  -webkit-mask: url('/brand/nirvaah-symbol.svg') center / contain no-repeat;
+  mask: url('/brand/nirvaah-symbol.svg') center / contain no-repeat;
+}
+
+.sidebar .brand b,
+.auth-left .brand b {
+  font-family: 'Space Grotesk', var(--font-body) !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.035em !important;
+}
+
+.sidebar .brand b { font-size: 19px !important; }
+.auth-left .brand b { font-size: 24px !important; line-height: 1.05 !important; }
+
+.brand-deva {
+  display: block;
+  margin-top: 1px;
+  font-family: 'Noto Sans Devanagari', var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--muted-foreground);
+}
+
+.auth-left .brand-deva { color: color-mix(in srgb, var(--foreground) 55%, transparent); }
+
+/* Accent orange: only for small brand details, never for surfaces. */
+.ai-thread-tag svg { color: var(--brand-accent); }
+.ai-rail-label svg { color: var(--brand-accent); }
+
+/* ==========================================================================
+   HEADER CONTROL ROW — page filters sit left of the centred search, page
+   actions sit right of it. The search keeps the exact centre column.
+   ========================================================================== */
+
+main > header {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+main > header .topbar-search {
+  width: 100%;
+  margin: 0 !important;
+  justify-self: stretch;
+}
+
+.header-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: 2px 0;
+}
+.header-slot::-webkit-scrollbar { display: none; }
+.header-slot > * { flex: 0 0 auto; }
+
+.header-actions { justify-content: flex-end; }
+
+.header-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.header-heading small {
+  display: block;
+  font-family: var(--font-body) !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-heading h1 {
+  margin: 0 !important;
+  font-family: var(--font-display) !important;
+  font-size: 27px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.022em !important;
+  line-height: 1.12 !important;
+  color: var(--foreground) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-heading p {
+  margin: 0 !important;
+  font-size: 13.5px !important;
+  color: var(--muted-foreground) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-heading .heading-count {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px !important;
+  color: var(--muted-foreground) !important;
+}
+
+/* Dropdowns moved back down, into the body under the header */
+.page-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -4px 0 18px;
+}
+
+.heading-actions { display: none !important; }
+
+@media (max-width: 1180px) {
+  main > header {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
+  }
+  main > header { grid-template-columns: minmax(0, 1fr) minmax(260px, 380px) minmax(0, auto); }
+}
+
+@media (max-width: 900px) {
+  main > header {
+    display: flex !important;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding-top: 2px !important;
+  }
+  main > header .topbar-search { order: 1; width: 100%; }
+  .header-heading { order: 0; width: 100%; }
+  .header-heading p { display: none; }
+  .page-filters { margin-top: 0; }
+  /* Wrap instead of clipping: a scrolled button reads as a broken button. */
+  .header-actions {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    overflow: visible;
+  }
+}
+
+/* ── Sidebar brand line ────────────────────────────────────────────────────
+   "PERSONAL FINANCE" was a functional label with no meaning. Nirvaah (निर्वाह)
+   means livelihood / sustenance, so the line carries the idea, not the category. */
+.sidebar .brand .brand-line {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-body) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.005em !important;
+  text-transform: none !important;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--foreground) 82%, transparent) !important;
+  white-space: nowrap;
+}
+
+.sidebar .brand .brand-line::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--brand-accent);
+  vertical-align: middle;
+}
+
+.sidebar .brand b { font-size: 20px !important; }
+
+/* Transaction actions sit with the filters, right above the table. */
+.filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .filter-actions { margin-left: 0; width: 100%; }
+}
+
+/* ==========================================================================
+   PAGE MARKS — one tint per page, in the sidebar and beside the page name.
+   ========================================================================== */
+
+.sidebar nav button .nav-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+}
+
+.sidebar nav button .nav-ico svg {
+  color: var(--page-tint, currentColor) !important;
+  stroke-width: 1.7;
+}
+
+[data-theme='dark'] .sidebar nav button .nav-ico svg {
+  color: color-mix(in srgb, var(--page-tint, currentColor) 70%, white) !important;
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Icon only — no chip behind it in the header. */
+.page-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  background: none;
+}
+
+.page-mark svg {
+  color: var(--page-tint, var(--foreground));
+  stroke-width: 1.75;
+}
+
+[data-theme='dark'] .page-mark svg {
+  color: color-mix(in srgb, var(--page-tint, #fff) 70%, white);
+}
+
+
+.app-version {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+  text-transform: none;   /* the footer is uppercased; a version tag must not be */
+}

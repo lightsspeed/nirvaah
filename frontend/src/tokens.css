@@ -1,0 +1,226 @@
+/* ==========================================================================
+   NIRVAAH — TOKENS
+   Single source of truth for colour, type, radius, spacing and elevation.
+   Mirrors DESIGN.md. Loaded after the legacy sheets so these values win;
+   the legacy variable names are aliased onto the new tokens at the bottom
+   so the 3k lines of existing CSS adopt the new system without a rewrite.
+   ========================================================================== */
+
+:root {
+  /* ── Surfaces & text ─────────────────────────────────────────────────── */
+  --background: #f6f4ef;
+  --foreground: #1c1b19;
+  --card: #fffdfa;
+  --popover: #fffdfa;
+  --secondary: #efebe2;
+  --muted: #efebe2;
+  --muted-foreground: #6b645a;
+  --accent: #f1ebe0;
+  --accent-foreground: #1c1b19;
+
+  /* ── Action & brand ──────────────────────────────────────────────────── */
+  --primary: #1c1b19;
+  --primary-foreground: #faf8f4;
+  /* Brand kit v2: electric cobalt + accent orange on warm ivory. */
+  --brand: #071EF8;
+  --brand-foreground: #f8f6f2;
+  --brand-soft: #e8eafe;
+  --brand-soft-foreground: #1b2ac8;
+  --brand-accent: #ff7a1a;
+  --brand-accent-soft: #ffece0;
+  --brand-ink: #111820;
+  /* The logo tile is always the approved cobalt, in both themes. */
+  --brand-tile: #071ef8;
+  --brand-tile-foreground: #ffffff;
+
+  /* ── Semantics ───────────────────────────────────────────────────────── */
+  --destructive: #a63a2a;
+  --destructive-foreground: #fff8f6;
+  --destructive-soft: #fbeae4;
+  --destructive-soft-foreground: #a63a2a;
+  --success: #3f7d4e;
+  --success-soft: #e8f1e6;
+  --success-soft-foreground: #2f6339;
+  --warning: #8a6414;
+  --warning-soft: #f8efd8;
+  --warning-soft-foreground: #6e4f10;
+
+  /* ── Lines & focus ───────────────────────────────────────────────────── */
+  --border: #e3ddd2;
+  /* Card edge: transparent = borderless (default). Set to
+     rgb(28 27 25 / 0.06) for the subtle outlined variant. */
+  --card-edge: transparent;
+  --border-subtle: #efe9df;
+  --input: #e3ddd2;
+  --ring: #071ef8;
+
+  /* ── Sidebar ─────────────────────────────────────────────────────────── */
+  --sidebar: #f1ede4;
+  --sidebar-foreground: #1c1b19;
+  --sidebar-accent: #fffdfa;
+  --sidebar-accent-foreground: #1c1b19;
+  --sidebar-border: #e3ddd2;
+
+  /* ── Charts ──────────────────────────────────────────────────────────── */
+  --chart-1: #b4552f;
+  --chart-2: #6e8b6a;
+  --chart-3: #c79a3e;
+  --chart-4: #5a7089;
+  --chart-5: #8a5a72;
+  --chart-6: #2f7f8f;
+  --chart-7: #6a5aa8;
+  --chart-8: #a06a3f;
+  --chart-9: #7c8a3a;
+  --chart-10: #a4444d;
+  --chart-grid: #efe9df;
+
+  /* ── Type scale ──────────────────────────────────────────────────────── */
+  --text-2xs: 12.5px;   /* overline labels, counts */
+  --text-xs: 13px;    /* captions, badges, table headers */
+  --text-sm: 14.5px;  /* small text, dense rows */
+  --text-base: 16px;  /* body, nav, table cells, controls */
+  --text-md: 17px;    /* emphasised body */
+  --text-lg: 20px;    /* card headers */
+  --text-xl: 24px;    /* panel / dialog titles */
+  --text-2xl: 40px;   /* KPI values */
+  --text-3xl: 52px;   /* page hero */
+  --text-num: 17px;   /* money in tables and rows */
+  --text-num-kpi: 36px;  /* secondary KPI figures */
+  --text-num-hero: 46px; /* the one figure a card leads with */
+
+  /* ── Control metrics (grow with the type, never independently) ───────── */
+  --control-h: 40px;
+  --control-h-sm: 34px;
+  --row-h: 52px;
+  --header-h: 68px;
+
+  /* ── Type ────────────────────────────────────────────────────────────── */
+  --font-body: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  /* ── Radius scale (DESIGN.md · Shapes) ───────────────────────────────── */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+
+  /* ── Spacing ─────────────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Elevation: L1 float, L2 modal. Cards are flat. ──────────────────── */
+  --elevation-l1: 0 8px 24px -12px rgb(28 27 25 / 0.18);
+  --elevation-l2: 0 24px 60px -20px rgb(28 27 25 / 0.24);
+  --shadow-l1: var(--elevation-l1);
+  --shadow-l2: var(--elevation-l2);
+
+  /* ── Motion ──────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 240ms;
+}
+
+/* ── Dark: same token names, warm neutrals (never a blue-dark) ─────────── */
+[data-theme='dark'] {
+  --background: #141312;
+  --foreground: #f2eee7;
+  --card: #1b1a18;
+  --popover: #201e1b;
+  --secondary: #232120;
+  --muted: #232120;
+  --muted-foreground: #a9a29a;
+  --accent: #262320;
+  --accent-foreground: #f2eee7;
+
+  --primary: #f2eee7;
+  --primary-foreground: #141312;
+  --brand: #5b6cff;
+  --brand-foreground: #0b1020;
+  --brand-soft: #1c2340;
+  --brand-soft-foreground: #c3c9ff;
+  --brand-accent: #ff8a3d;
+  --brand-accent-soft: #3a2415;
+  --brand-tile: #071ef8;
+  --brand-tile-foreground: #ffffff;
+
+  --destructive: #e4695a;
+  --destructive-foreground: #141312;
+  --destructive-soft: #3a211c;
+  --destructive-soft-foreground: #eda093;
+  --success: #7fb08a;
+  --success-soft: #1e2a20;
+  --success-soft-foreground: #a7cead;
+  --warning: #e0b457;
+  --warning-soft: #33280f;
+  --warning-soft-foreground: #e8c47e;
+
+  --border: #2b2926;
+  --card-edge: transparent;
+  --border-subtle: #242220;
+  --input: #2b2926;
+  --ring: #5b6cff;
+
+  --sidebar: #191817;
+  --sidebar-foreground: #f2eee7;
+  --sidebar-accent: #232120;
+  --sidebar-accent-foreground: #f2eee7;
+  --sidebar-border: #2b2926;
+
+  --chart-1: #e0795a;
+  --chart-2: #8fb48a;
+  --chart-3: #e0b457;
+  --chart-4: #7c93ac;
+  --chart-5: #c08aa0;
+  --chart-6: #5fb3c4;
+  --chart-7: #9b8fd6;
+  --chart-8: #cf9a6b;
+  --chart-9: #a8b56a;
+  --chart-10: #e0838c;
+  --chart-grid: #2b2926;
+
+  --elevation-l1: 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --elevation-l2: 0 24px 60px -20px rgb(0 0 0 / 0.7);
+  --shadow-l1: var(--elevation-l1);
+  --shadow-l2: var(--elevation-l2);
+}
+
+/* ==========================================================================
+   Legacy aliases — old sheets keep working, new values apply everywhere.
+   ========================================================================== */
+:root {
+  --bg-page: var(--background);
+  --bg-card: var(--card);
+  --bg-raised: var(--popover);
+  --bg-inset: var(--muted);
+  --bg-hover: var(--accent);
+  --border-color: var(--border);
+  --text-main: var(--foreground);
+  --text-muted: var(--muted-foreground);
+  --text-subtle: var(--muted-foreground);
+  --primary-hover: var(--brand);
+  --primary-light: var(--accent);
+  --primary-ring: rgb(180 85 47 / 0.18);
+  --success-bg: var(--success-soft);
+  --danger: var(--destructive);
+  --danger-bg: var(--destructive-soft);
+  --warn: var(--warning);
+  --warn-bg: var(--warning-soft);
+  --accent-lime: var(--chart-2);
+  --dark: var(--foreground);
+  /* Cards are flat by contract: no ambient shadow at any level. */
+  --shadow-sm: none;
+  --shadow-md: var(--elevation-l1);
+  --shadow-lg: var(--elevation-l2);
+}

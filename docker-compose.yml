@@ -1,0 +1,195 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-finance}
+      POSTGRES_USER: ${POSTGRES_USER:-finance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
+    # No published port: the database is only reachable from the backend.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    shm_size: 128mb
+    mem_limit: 512m
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finance} -d ${POSTGRES_DB:-finance}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: ${DOCKER_NAMESPACE:-lightsspeed}/nirvaah-backend:${APP_VERSION:-1.0.0}
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-finance}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/${POSTGRES_DB:-finance}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
+      PYTHONUNBUFFERED: "1"
+      # Ollama runs natively on the host; the container reaches it through the
+      # docker bridge gateway that extra_hosts maps below.
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      # Cloud fallback (OpenAI-compatible). DeepSeek by default; the DEEPSEEK_*
+      # names in .env are honoured so one key configures both.
+      FALLBACK_BASE_URL: ${FALLBACK_BASE_URL:-${DEEPSEEK_API_URL:-https://api.deepseek.com/v1}}
+      FALLBACK_MODEL: ${FALLBACK_MODEL:-deepseek-flash}
+      FALLBACK_API_KEY: ${FALLBACK_API_KEY:-${DEEPSEEK_API_KEY:-}}
+      ASSISTANT_FALLBACK: ${ASSISTANT_FALLBACK:-on}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - app
+      - data
+    # Loopback only: for local tooling (curl, psql-style checks). The browser
+    # reaches the API through the nginx proxy, not this port.
+    ports:
+      - "127.0.0.1:8001:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 200
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: ${DOCKER_NAMESPACE:-lightsspeed}/nirvaah-frontend:${APP_VERSION:-1.0.0}
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    networks:
+      - app
+    ports:
+      - "3001:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    pids_limit: 100
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backup:
+    image: ${DOCKER_NAMESPACE:-lightsspeed}/nirvaah-backup:${APP_VERSION:-1.0.0}
+    build: ./backup
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-finance}
+      PGUSER: ${POSTGRES_USER:-finance}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-4}
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      RETENTION_MONTHLY: ${BACKUP_RETENTION_MONTHS:-12}
+      VERIFY_RESTORES: ${BACKUP_VERIFY_RESTORES:-true}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_PREFIX: ${S3_PREFIX:-nirvaah/postgres}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      TZ: ${TZ:-Asia/Kolkata}
+    volumes:
+      - backups:/backup/work
+      - backup_state:/backup/state
+    networks:
+      - data
+      - egress
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 100
+    # Unhealthy when no successful run has landed in twice the interval, so
+    # `docker compose ps` is enough to notice a dead backup agent.
+    healthcheck:
+      test: ['CMD-SHELL', '/backup/backup.sh --status | grep -qE "ok|unchanged" || exit 1']
+      interval: 30m
+      timeout: 10s
+      retries: 2
+      start_period: 10m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+  backups:
+  backup_state:
+
+networks:
+  # The frontend can reach the backend; only the backend can reach the database.
+  app:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
+  # Outbound-only network. The backup agent is the one service that must reach
+  # the internet (S3); nothing else gets to leave the stack.
+  egress:
+    driver: bridge
