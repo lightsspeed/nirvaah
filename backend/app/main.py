@@ -192,9 +192,6 @@ def update_transaction(item_id: int, data: schemas.TransactionIn, db: Session = 
 def delete_transaction(item_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     item=owned(db,models.Transaction,item_id,user); db.delete(item); db.commit(); return {"deleted":True}
 
-def crud_routes():
-    pass
-
 @app.get("/api/budgets")
 def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(get_current_user)):
     q = db.query(models.Budget).filter_by(user_id=user.id)
