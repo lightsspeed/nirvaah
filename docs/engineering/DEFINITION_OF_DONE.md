@@ -65,11 +65,11 @@ task; flipping a CI step from advisory to blocking happens in that task.
 | # | Debt | Measure | Exit condition |
 |---|---|---|---|
 | 1 | ~~Dead, broken Ollama transport in `ai.py` (`_post_json`, `ollama_chat`, `OLLAMA_MODEL`, 9 × `F821`)~~ — **retired on `feature/engineering-foundation`**, together with its `per-file-ignores` entry. `F821` is clean repo-wide and the ignore is gone | `ruff check --select F821 app tests` | ✅ done |
-| 2 | ~~Legacy executor + helpers in `ai.py`~~ — **retired on `feature/engineering-foundation`**: executor and its private helpers removed in `574a6dc`, then the stranded coercion helpers (`_money`, `_inr`, `_num`, `_text`, `_date`, `_month`, `_tags`), `STOPWORDS`, `import uuid` and `Any`/`datetime` imports removed. `ai.py` 901 → 434 lines | `ruff check app/ai.py` | ✅ done |
+| 2 | ~~Legacy executor, its private helpers and the `execute_action` wrapper in `ai.py`~~ — **retired on `feature/engineering-foundation`**: executor and its private helpers removed in `574a6dc`, the stranded coercion helpers (`_money`, `_inr`, `_num`, `_text`, `_date`, `_month`, `_tags`), `STOPWORDS`, `import uuid` and the `Any`/`datetime` imports removed in `81d0656`, and the unused `execute_action` compatibility wrapper plus its dead imports removed in `7db3c9d`. `ai.py` 901 → 426 lines | `ruff check app/ai.py` | ✅ done |
 | 3 | ~~`backend/app/main.py` `crud_routes()` — empty function~~ — **retired on `feature/engineering-foundation`**: no decorator, no caller, no registration; removed with no change to the 48 routes | route count | ✅ done |
 | 4 | `frontend/src/style.css` — 1,587 lines, never imported | `grep -r "style.css" frontend/src` | deleted |
-| 5 | Backend lint baseline | 91 findings, 20 files unformatted | 0 findings; then CI step becomes blocking |
-| 6 | Frontend lint baseline | 1 error (`App.jsx:1556` conditional `useMemo`), 31 warnings | 0 errors; warnings counted per PR |
+| 5 | Backend lint baseline | 79 findings, 20 files unformatted (same numbers as `CODING_STANDARDS.md`) | 0 findings; then CI step becomes blocking |
+| 6 | Frontend lint baseline | `App.jsx:1556` hook-order error **fixed in `42ed91a`**; the 31 warnings reported after that commit remain (unused vars, `exhaustive-deps`) | 0 errors ✅; 0 warnings before the step can enforce `--max-warnings=0` |
 | 7 | Frontend format baseline | 14 files | `npm run format` once, in its own commit |
 | 8 | No migrations | `create_all` only | Alembic baseline + `alembic upgrade head` in the image entrypoint |
 | 9 | Money as `double precision` | 9 columns | `Numeric(14,2)` + backfill |
