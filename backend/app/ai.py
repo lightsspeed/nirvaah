@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import json
 import re
-import uuid
 from calendar import monthrange
-from datetime import date, datetime, timedelta
-from typing import Any
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -24,66 +22,6 @@ from . import models
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
-
-def _money(value: Any) -> float:
-    try:
-        return round(float(value), 2)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _inr(value: Any) -> str:
-    amount = _money(value)
-    whole = f"{abs(amount):,.2f}"
-    return ("-" if amount < 0 else "") + "₹" + whole
-
-
-def _num(payload: dict, key: str, default=None):
-    if key in payload and payload[key] not in (None, ""):
-        try:
-            return float(payload[key])
-        except (TypeError, ValueError):
-            raise ValueError(f"{key} must be a number")
-    if default is not None:
-        return default
-    raise ValueError(f"{key} is required")
-
-
-def _text(payload: dict, key: str, default=""):
-    value = payload.get(key, default)
-    return "" if value is None else str(value).strip()
-
-
-def _date(payload: dict, key: str, default: date | None = None):
-    raw = payload.get(key)
-    if raw in (None, ""):
-        return default
-    if isinstance(raw, date):
-        return raw
-    text = str(raw).strip()[:10]
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d %b %Y", "%b %d %Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    raise ValueError(f"{key} must be a date like 2026-11-10")
-
-
-def _month(payload: dict, default: str | None = None):
-    raw = str(payload.get("month") or "").strip()
-    if re.fullmatch(r"\d{4}-\d{2}", raw):
-        return raw
-    if raw:
-        raise ValueError("month must look like 2026-11")
-    return default or date.today().strftime("%Y-%m")
-
-
-def _tags(payload: dict):
-    tags = payload.get("tags") or []
-    if isinstance(tags, str):
-        tags = [t.strip().lstrip("#") for t in tags.split(",")]
-    return json.dumps([str(t).strip().lstrip("#") for t in tags if str(t).strip()])
-
 
 
 def _month_bounds(month: str) -> tuple[date, date]:
@@ -439,16 +377,6 @@ def parse_model_output(raw: str) -> tuple[str, list[dict]]:
             return reply, actions
     # No JSON at all: use the text as the answer so the user still gets a reply.
     return raw, []
-
-
-STOPWORDS = {
-    "the", "and", "for", "with", "from", "that", "this", "these", "those", "delete", "remove",
-    "drop", "erase", "update", "change", "edit", "set", "make", "please", "can", "you", "your",
-    "my", "our", "now", "under", "into", "out", "its", "was", "were", "has", "have", "had",
-    "transaction", "transactions", "expense", "expenses", "income", "record", "entry", "entries",
-    "goal", "budget", "note", "notes", "task", "tasks", "journal", "investment", "liability",
-    "one", "some", "all", "just", "about", "need", "want", "would", "like", "then", "than",
-}
 
 
 # ── action execution ────────────────────────────────────────────────────────
