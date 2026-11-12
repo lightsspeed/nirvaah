@@ -22,8 +22,6 @@ from sqlalchemy.orm import Session
 
 from . import models
 
-OLLAMA_MODEL = __import__("os").getenv("OLLAMA_MODEL", "qwen2.5:3b")
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -413,36 +411,6 @@ def system_prompt(user, snapshot: dict, memories: list[str] | None = None, turn:
         f"DATA (live snapshot of this user's records):\n{body}\n"
         f"Remember: reply with one JSON object only."
     )
-
-
-# ── Ollama transport ────────────────────────────────────────────────────────
-
-def _post_json(url: str, payload: dict, timeout: float) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        return json.loads(res.read().decode("utf-8"))
-
-
-def ollama_chat(messages: list[dict]) -> str:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.2, "num_ctx": NUM_CTX},
-    }
-    try:
-        data = _post_json(f"{OLLAMA_URL}/api/chat", payload, OLLAMA_TIMEOUT)
-    except urllib.error.URLError as exc:
-        raise HTTPException(503, f"Assistant model is unreachable at {OLLAMA_URL} ({exc.reason}).") from exc
-    except TimeoutError as exc:
-        raise HTTPException(504, "The assistant model took too long to answer.") from exc
-    return ((data.get("message") or {}).get("content") or "").strip()
 
 
 def parse_model_output(raw: str) -> tuple[str, list[dict]]:

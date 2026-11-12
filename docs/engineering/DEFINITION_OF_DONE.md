@@ -64,7 +64,7 @@ task; flipping a CI step from advisory to blocking happens in that task.
 
 | # | Debt | Measure | Exit condition |
 |---|---|---|---|
-| 1 | Dead, broken Ollama transport in `ai.py` (~35 lines: `_post_json`, `ollama_chat`; 9 × `F821`) | `ruff check --select F821 app/ai.py` | block deleted, `per-file-ignores` removed |
+| 1 | ~~Dead, broken Ollama transport in `ai.py` (`_post_json`, `ollama_chat`, `OLLAMA_MODEL`, 9 × `F821`)~~ — **retired on `feature/engineering-foundation`**, together with its `per-file-ignores` entry. `F821` is clean repo-wide and the ignore is gone | `ruff check --select F821 app tests` | ✅ done |
 | 2 | Legacy executor + helpers in `ai.py` (`_legacy_execute_action`, `_lookup`, `_guard_row`, `_content_tokens`, `_identifying_text`; ~300 lines) | count of `def _legacy_execute_action` | deleted, tests still green (they already cover `agent/execution.py`) |
 | 3 | `backend/app/main.py:195` `crud_routes()` — empty function | — | deleted |
 | 4 | `frontend/src/style.css` — 1,587 lines, never imported | `grep -r "style.css" frontend/src` | deleted |

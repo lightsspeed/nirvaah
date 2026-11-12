@@ -37,14 +37,6 @@ ignore = [
     "B008",
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# TEMPORARY. app/ai.py still contains the retired local-Ollama transport
-# (lines ~414-448) which references urllib/HTTPException/OLLAMA_URL that the
-# module no longer imports. Nothing calls it, so it cannot fail at runtime today;
-# deleting that block is tracked in docs/engineering/DEFINITION_OF_DONE.md and the
-# audit roadmap (H6). Remove this ignore in the same commit that removes the code.
-"app/ai.py" = ["F821"]
-
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 lines-after-imports = 2
