@@ -1517,6 +1517,35 @@ export default function App() {
         }
     };
 
+    // Expense trend, date by date, across the selected period. Empty days are
+    // kept so the axis is continuous and a quiet week is visible as a gap.
+    const expenseByDay = useMemo(() => {
+        const start = range.startDate || txRange?.min_date;
+        const end = range.endDate || txRange?.max_date;
+        if (!start || !end || start > end) return [];
+        const byDay = new Map();
+        tx.forEach(t => {
+            if (t.kind !== 'expense') return;
+            const key = (t.txn_date || '').slice(0, 10);
+            if (!key || key < start || key > end) return;
+            byDay.set(key, (byDay.get(key) || 0) + Number(t.amount || 0));
+        });
+        const out = [];
+        const cursor = new Date(`${start}T00:00:00`);
+        const last = new Date(`${end}T00:00:00`);
+        for (let i = 0; cursor <= last && i < 800; i++) {
+            const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+            out.push({
+                date: key,
+                label: cursor.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+                shortLabel: cursor.toLocaleDateString('en-IN', { day: 'numeric' }),
+                expense: Math.round((byDay.get(key) || 0) * 100) / 100,
+            });
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        return out;
+    }, [tx, range.startDate, range.endDate, txRange]);
+
     // ── Auth View ───────────────────────────────────────────────────────────────
     if (!token) return (
         <div className="auth">
@@ -1551,34 +1580,6 @@ export default function App() {
 
     const data = d || { period: range.label, balance: 0, income: 0, expenses: 0, savings: 0, savings_rate: 0, investment_value: 0, liabilities: 0, net_worth: 0, category_expenses: [], budgets: [], recent_transactions: [], total_txns: 0 };
 
-    // Expense trend, date by date, across the selected period. Empty days are
-    // kept so the axis is continuous and a quiet week is visible as a gap.
-    const expenseByDay = useMemo(() => {
-        const start = range.startDate || txRange?.min_date;
-        const end = range.endDate || txRange?.max_date;
-        if (!start || !end || start > end) return [];
-        const byDay = new Map();
-        tx.forEach(t => {
-            if (t.kind !== 'expense') return;
-            const key = (t.txn_date || '').slice(0, 10);
-            if (!key || key < start || key > end) return;
-            byDay.set(key, (byDay.get(key) || 0) + Number(t.amount || 0));
-        });
-        const out = [];
-        const cursor = new Date(`${start}T00:00:00`);
-        const last = new Date(`${end}T00:00:00`);
-        for (let i = 0; cursor <= last && i < 800; i++) {
-            const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
-            out.push({
-                date: key,
-                label: cursor.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-                shortLabel: cursor.toLocaleDateString('en-IN', { day: 'numeric' }),
-                expense: Math.round((byDay.get(key) || 0) * 100) / 100,
-            });
-            cursor.setDate(cursor.getDate() + 1);
-        }
-        return out;
-    }, [tx, range.startDate, range.endDate, txRange]);
 
     // Filtered transactions for Transactions view (supports description, category, payment method, date, and amount numbers)
     const filteredTx = tx.filter(t => {
