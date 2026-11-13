@@ -98,6 +98,15 @@ backup_run() { # backup_run <endpoint> [retention_days]
         "$IMG" --once 2>&1
 }
 
+backup_run_db() { # backup_run_db <database> <endpoint> [retention_days]
+    docker run --rm --network "$NET" -v "$WORK:/backup/work" -v "$STATE:/backup/state" \
+        -e PGHOST="$DB" -e PGPORT=5432 -e PGDATABASE="$1" -e PGUSER=finance -e PGPASSWORD="$PGPASS" \
+        -e S3_BUCKET="$BUCKET" -e S3_ENDPOINT="$2" -e AWS_REGION=us-east-1 \
+        -e AWS_ACCESS_KEY_ID="$S3_KEY" -e AWS_SECRET_ACCESS_KEY="$S3_SECRET" \
+        -e RETENTION_DAYS="${3:-14}" -e RETENTION_MONTHLY=12 -e VERIFY_RESTORES=true \
+        "$IMG" --once 2>&1
+}
+
 remote_ls() {
     docker run --rm --network "$NET" -e AWS_ACCESS_KEY_ID="$S3_KEY" -e AWS_SECRET_ACCESS_KEY="$S3_SECRET" \
         -e AWS_DEFAULT_REGION=us-east-1 --entrypoint sh "$IMG" \
@@ -128,6 +137,7 @@ contains "status ok" '"status":"ok"' "$status"
 contains "remote_verified true" '"remote_verified":true' "$status"
 contains "last_success carries the remote key" '"remote":"nirvaah/postgres/' "$(state_file last_success.json)"
 vol_sh "$WORK" "[ -f /v/latest.dump ] && [ -f /v/latest.dump.sha256 ]" && ok "local copy has a checksum sidecar" || bad "local copy has a checksum sidecar"
+vol_sh "$STATE" "[ -d /v/backup.lock ] && echo present" | grep -q present && bad "the owner releases its own lock" || ok "the owner releases its own lock"
 [ -n "$(remote_ls)" ] && ok "remote object exists" || bad "remote object exists"
 
 docker run --rm -v "$STATE:/backup/state" -e INTERVAL_HOURS=4 "$IMG" --health >/dev/null 2>&1
@@ -227,18 +237,75 @@ remote_ls | grep -q 'nirvaah-finance-' && ok "remote archives left untouched on 
 
 # ── 11. concurrency ─────────────────────────────────────────────────────────
 echo "── 11. overlapping runs"
-vol_sh "$STATE" "mkdir -p /v/backup.lock && printf '4242\n-\nother-container\n' > /v/backup.lock/owner && date -u +%s > /v/backup.lock/heartbeat"
+# The real Docker shape: the holder is PID 1 inside its own container, so its
+# owner file starts with "1". A second invocation is also PID 1 — a PID-only
+# ownership check therefore lets its EXIT trap delete the live holder's lock.
+ACTIVE_OWNER='1
+12345
+other-container'
+vol_sh "$STATE" "mkdir -p /v/backup.lock && printf '1\n12345\nother-container\n' > /v/backup.lock/owner && date -u +%s > /v/backup.lock/heartbeat"
+
 out=$(backup_run "http://$S3:9090")
 check "overlapping run exits 0 (skips cleanly)" 0 "$?"
 contains "overlap is announced" "another backup is running" "$out"
+owner_now=$(vol_sh "$STATE" "cat /v/backup.lock/owner 2>/dev/null")
+check "a skipped run leaves the active lock untouched" "$ACTIVE_OWNER" "$(printf '%s' "$owner_now" | tr -d '\r')"
 
-vol_sh "$STATE" "printf '999999\n-\nother-container\n' > /v/backup.lock/owner && date -u -d \"@$(( $(date -u +%s) - 7200 ))\" +%s > /v/backup.lock/heartbeat"
+out=$(backup_run "http://$S3:9090")
+check "a third run still cannot acquire the held lock" 0 "$?"
+contains "third run also skips" "another backup is running" "$out"
+
+# stale lock: the heartbeat has gone quiet long past the threshold
+vol_sh "$STATE" "printf '1\n12345\nother-container\n' > /v/backup.lock/owner && date -u -d \"@$(( $(date -u +%s) - 7200 ))\" +%s > /v/backup.lock/heartbeat"
 out=$(backup_run "http://$S3:9090")
 check "stale lock is reclaimed" 0 "$?"
 contains "stale lock logged" "clearing stale lock" "$out"
 
-# ── 12. cleanup ─────────────────────────────────────────────────────────────
-echo "── 12. cleanup"
+# same host, live PID but a different start time: a recycled PID, not the holder
+out=$(docker run --rm --network "$NET" -v "$STATE:/backup/state" \
+    -e PGHOST="$DB" -e PGPASSWORD="$PGPASS" -e PGUSER=finance -e PGDATABASE=finance \
+    -e LOCK_STALE_MINUTES=30 --entrypoint sh "$IMG" -c '
+        mkdir -p /backup/state/backup.lock
+        printf "%s\n%s\n%s\n" 1 999999 "$(hostname)" > /backup/state/backup.lock/owner
+        date -u +%s > /backup/state/backup.lock/heartbeat
+        exec /backup/backup.sh --once' 2>&1)
+check "recycled PID on the same host runs through" 0 "$?"
+contains "recycled PID is treated as stale" "clearing stale lock" "$out"
+
+# ── 12. verification fails closed when nothing is discovered ────────────────
+echo "── 12. empty table discovery"
+docker exec "$DB" psql -U finance -d postgres -q -c "DROP DATABASE IF EXISTS empty_db;" >/dev/null
+docker exec "$DB" psql -U finance -d postgres -q -c "CREATE DATABASE empty_db;" >/dev/null
+remote_before=$(remote_ls | grep -c . || true)
+# an aged archive retention would delete, if this run were allowed to prune
+vol_sh "$WORK" "cp /v/latest.dump /v/nirvaah-finance-20200315T000000Z.dump && touch -d '2020-03-16' /v/nirvaah-finance-20200315T000000Z.dump"
+out=$(backup_run_db empty_db "http://$S3:9090" 1)
+check "empty discovery fails the run" 1 "$?"
+contains "empty discovery is explained" "no tables discovered to verify" "$out"
+status=$(status_json)
+contains "status is verify-failed" '"status":"verify-failed"' "$status"
+contains "the failed run is not marked verified" '"remote_verified":false' "$status"
+check "nothing was uploaded" "$remote_before" "$(remote_ls | grep -c . || true)"
+work_ls | grep -q '20200315T000000Z' && ok "retention did not run after the failure" || bad "retention did not run after the failure"
+check "no verification database left behind" "" \
+    "$(docker exec "$DB" psql -U finance -d postgres -t -A -c "SELECT datname FROM pg_database WHERE datname='nirvaah_verify';" | tr -d ' \r')"
+
+# ── 13. the discovery query itself fails ────────────────────────────────────
+echo "── 13. table-discovery query failure"
+out=$(docker run --rm --network "$NET" -v "$WORK:/backup/work" -v "$STATE:/backup/state" \
+    -v "$HERE/psql_fail_discovery.sh:/shim/psql:ro" \
+    -e PGHOST="$DB" -e PGPORT=5432 -e PGDATABASE=finance -e PGUSER=finance -e PGPASSWORD="$PGPASS" \
+    -e S3_BUCKET="$BUCKET" -e S3_ENDPOINT="http://$S3:9090" -e AWS_REGION=us-east-1 \
+    -e AWS_ACCESS_KEY_ID="$S3_KEY" -e AWS_SECRET_ACCESS_KEY="$S3_SECRET" \
+    --entrypoint sh "$IMG" -c '
+        mkdir -p /tmp/shim && cp /shim/psql /tmp/shim/psql && chmod +x /tmp/shim/psql
+        PATH=/tmp/shim:$PATH exec /backup/backup.sh --once' 2>&1)
+check "failed discovery fails the run" 1 "$?"
+contains "failed discovery is explained" "no tables discovered to verify" "$out"
+contains "status is verify-failed after discovery failure" '"status":"verify-failed"' "$(status_json)"
+
+# ── 14. cleanup ─────────────────────────────────────────────────────────────
+echo "── 14. cleanup"
 check "no verification database left behind" "" \
     "$(docker exec "$DB" psql -U finance -d postgres -t -A -c "SELECT datname FROM pg_database WHERE datname='nirvaah_verify';" | tr -d ' \r')"
 vol_sh "$STATE" "[ -d /v/backup.lock ] && echo present" | grep -q present && bad "lock removed after the run" || ok "lock removed after the run"
@@ -246,8 +313,8 @@ vol_sh "$STATE" "[ -d /v/backup.lock ] && echo present" | grep -q present && bad
 status=$(status_json)
 contains "status retains last_success" '"last_success":{"at"' "$status"
 
-# ── 13. live restore path (last: it replaces the test database) ─────────────
-echo "── 13. live restore"
+# ── 15. live restore path (last: it replaces the test database) ─────────────
+echo "── 15. live restore"
 live_before=$(docker exec "$DB" psql -U finance -d finance -t -A -c "SELECT count(*) FROM gamma;" | tr -d ' \r')
 out=$(restore_run latest.dump --into-live)
 check "live restore exits 0 with --into-live" 0 "$?"

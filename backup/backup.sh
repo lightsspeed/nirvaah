@@ -81,6 +81,12 @@ heartbeat_pid=""
 
 proc_start() { if [ -r "/proc/$1/stat" ]; then awk '{print $22}' "/proc/$1/stat" 2>/dev/null; else echo "-"; fi; }
 
+# The identity of a lock owner: PID, the process start time from /proc, hostname.
+# Every container runs this script as PID 1, so a bare PID identifies "some
+# container's init" rather than the owner — release and reclaim must compare all
+# three, or a second container's EXIT trap deletes a live holder's lock.
+my_owner() { printf '%s\n%s\n%s\n' "$$" "$(proc_start $$)" "$HOST_NAME"; }
+
 start_heartbeat() {
     ( while :; do date -u +%s > "$LOCK_DIR/heartbeat" 2>/dev/null || exit 0; sleep 30; done ) &
     heartbeat_pid=$!
@@ -112,7 +118,10 @@ lock_held_by_live_process() {
 
 acquire_lock() {
     if mkdir "$LOCK_DIR" 2>/dev/null; then
-        { printf '%s\n%s\n%s\n' "$$" "$(proc_start $$)" "$HOST_NAME"; } > "$LOCK_DIR/owner"
+        if ! my_owner > "$LOCK_DIR/owner" 2>/dev/null; then
+            log "lock vanished while acquiring — skipping this cycle"
+            return 1
+        fi
         start_heartbeat
         return 0
     fi
@@ -120,22 +129,35 @@ acquire_lock() {
         log "another backup is running (pid $owner_pid on ${owner_host:-?}) — skipping this cycle"
         return 1
     fi
-    # No live holder. An owner file that was never written (killed mid-acquire) is
-    # only cleared once it is clearly abandoned, so we do not race a starting run.
-    if [ ! -s "$LOCK_DIR/owner" ]; then
+
+    # No live holder. Remember the exact owner we judged stale, and refuse to
+    # delete anything else: another run may have reclaimed or re-created the lock
+    # between the liveness check and the removal.
+    stale_owner=$(cat "$LOCK_DIR/owner" 2>/dev/null || echo "")
+    if [ -z "$stale_owner" ]; then
+        # An owner file that was never written (killed mid-acquire) is only
+        # cleared once it is clearly abandoned, so we do not race a starting run.
         if find "$LOCK_DIR" -maxdepth 0 -mmin +2 | grep -q .; then
             log "clearing abandoned lock (no owner file, older than 2m)"
-            rm -rf "$LOCK_DIR"
         else
             log "another backup is starting — skipping this cycle"
             return 1
         fi
-    else
-        log "clearing stale lock from pid ${owner_pid:-?} on ${owner_host:-?} (no live holder)"
-        rm -rf "$LOCK_DIR"
     fi
+    if [ "$(cat "$LOCK_DIR/owner" 2>/dev/null || echo "")" != "$stale_owner" ]; then
+        log "lock changed while being reclaimed — skipping this cycle"
+        return 1
+    fi
+    if [ -n "$stale_owner" ]; then
+        log "clearing stale lock from pid ${owner_pid:-?} on ${owner_host:-?} (no live holder)"
+    fi
+    rm -rf "$LOCK_DIR"
+
     mkdir "$LOCK_DIR" 2>/dev/null || { log "could not take the lock — skipping"; return 1; }
-    { printf '%s\n%s\n%s\n' "$$" "$(proc_start $$)" "$HOST_NAME"; } > "$LOCK_DIR/owner"
+    if ! my_owner > "$LOCK_DIR/owner" 2>/dev/null; then
+        log "lost the lock while acquiring — skipping this cycle"
+        return 1
+    fi
     start_heartbeat
     return 0
 }
@@ -143,8 +165,11 @@ acquire_lock() {
 release_lock() {
     stop_heartbeat
     [ -d "$LOCK_DIR" ] || return 0
-    holder=$(sed -n '1p' "$LOCK_DIR/owner" 2>/dev/null || echo "")
-    if [ "$holder" = "$$" ]; then rm -rf "$LOCK_DIR"; fi
+    # Full identity, not just the PID: a run that never owned the lock (every
+    # container is PID 1) must not delete the holder's lock from its EXIT trap.
+    if [ "$(cat "$LOCK_DIR/owner" 2>/dev/null || echo "")" = "$(my_owner)" ]; then
+        rm -rf "$LOCK_DIR"
+    fi
     return 0
 }
 
@@ -262,6 +287,13 @@ verify_archive() {
     done
     psql -d postgres -c "DROP DATABASE IF EXISTS \"$VERIFY_DB\";" >/dev/null 2>&1
     [ "$mismatch" = 0 ] || return 1
+    # An empty catalogue means nothing was actually verified — a failed discovery
+    # query or a database with no public tables. Passing here would let an
+    # unverified archive be uploaded and retained.
+    if [ "$checked" -le 0 ]; then
+        log "ERROR no tables discovered to verify — refusing the backup"
+        return 1
+    fi
     log "restore test passed ($checked tables, row counts match live)"
     return 0
 }
