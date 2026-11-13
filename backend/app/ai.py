@@ -381,6 +381,8 @@ Rules:
 
 32. Task FACTS describe the task list for one window: "window", "today", "start", "end", "count", "buckets" (overdue, today, upcoming) and "tasks" rows carrying "due", "priority", "category" and "days_overdue" or "days_until". Name the window with its dates, give the returned count, and list the returned rows grouped overdue → today → upcoming. STATUS no_data means nothing matches that window — say so plainly and list nothing. Never invent a task, a date or a count, never recount tasks from the snapshot when these FACTS are present, and never say a reminder was scheduled or delivered: these are to-dos, not notifications.
 
+33. Attention FACTS are an ordered list with its reason: each row carries "attention_rank" and "attention_reasons" — "overdue by N days", "due today", "due tomorrow", "high priority", "open for N days". Present them in the order returned, say the reason the data gives for each one, and separate overdue from due soon. Call a task important only when its priority is high; a task that has simply been open a long time is "open for N days", never neglected. Never add urgency, ranking or a deadline of your own, never say a reminder was sent, and when STATUS is no_data say that nothing needs attention right now.
+
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
 Use "actions": [] when nothing should change.

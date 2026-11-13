@@ -334,6 +334,19 @@ _TASKS_CUE = re.compile(
     r"|\bwhat'?s\s+(?:left|pending)\b"
     r"|\bcoming\s+up\b",
     re.I)
+# "What needs my attention?", "which tasks should I focus on?", "what am I
+# neglecting?" — the attention list, which is not a date window (Task 29.2).
+_ATTENTION_CUE = re.compile(
+    r"\bwhat\s+needs\s+(?:my\s+)?attention\b"
+    r"|\bneeds?\s+(?:my|your|our)\s+attention\b"
+    r"|\bwhat\s+should\s+i\s+(?:focus\s+on|work\s+on|tackle|do)\s+first\b"
+    r"|\bwhich\s+tasks?\s+should\s+i\s+(?:focus|work\s+on|tackle|prioriti[sz]e|do)\b"
+    r"|\b(?:what|which)\s+(?:important\s+)?tasks?\b[^?]{0,40}\b(?:neglect|ignor|avoid|delay|behind)\w*\b"
+    r"|\b(?:am\s+i\s+)?neglecting\b|\bwhat\s+am\s+i\s+ignoring\b"
+    r"|\bshould\s*not\s+delay\b|\bshouldn'?t\s+delay\b"
+    r"|\bprioriti[sz]e\s+my\s+tasks?\b"
+    r"|\bwhat(?:'s|\s+is)\s+(?:most|the\s+most)\s+important\b",
+    re.I)
 # "What's due on my credit card?" is a bill question, not a task question.
 _MONEY_NOUN = re.compile(r"\b(?:bill|bills|card|payment|emi|invoice|rent|fee|amount|balance)\b",
                          re.I)
@@ -545,6 +558,16 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     # A change of records runs no query and leaves the analytics thread alone.
     if _is_write_request(text):
         return done(None, {}, None)
+
+    # Attention is asked before any date window: "which tasks should I focus
+    # on?" names no date, and "what am I neglecting?" is a ranking, not a
+    # lookup. It reads the whole open list, so a carried finance category is
+    # irrelevant, and it never triggers a write.
+    if _ATTENTION_CUE.search(text) and not _WRITE_CUE.search(text):
+        facts = task_intel.attention_tasks(db, user, today=today)
+        result = done("tasks_attention", {"window": "attention"}, facts)
+        result["context"] = context if isinstance(context, dict) else None
+        return result
 
     # A task question is answered from SQL, before any finance intent, and a
     # finance category carried by the thread never narrows it. The write guard
