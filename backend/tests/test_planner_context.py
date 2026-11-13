@@ -452,7 +452,23 @@ def test_all_scope_clears_the_category_and_keeps_the_month(db, groceries, messag
 
     assert resolved["category"] is None
     assert resolved["month"] == month
+    assert resolved["all_categories"] is True
+    # All categories is a change of scope, not a reset: the thread keeps going
+    # (Task 27.5.3 F6), so a later "what about June?" is still a follow-up.
+    assert resolved["reset"] is False
+
+
+@pytest.mark.parametrize("message", [
+    "How much did I spend overall?",
+    "What did I spend in total?",
+    "Show me everything altogether.",
+])
+def test_an_all_time_request_resets_the_thread(db, groceries, message):
+    resolved = planner.resolve_followup(message, context(), TODAY, pool=["Groceries"], turn=2)
+
     assert resolved["reset"] is True
+    assert resolved["all_categories"] is False
+    assert resolved["category"] is None and resolved["month"] is None
 
 
 def test_all_expenses_lists_every_category(db, groceries):

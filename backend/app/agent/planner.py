@@ -279,7 +279,14 @@ _DEICTIC = re.compile(
 # "no, I meant fuel" — the user is correcting a dimension we already have.
 _CORRECTION = re.compile(r"\b(no|nope|not|i meant|i mean|actually|rather|instead)\b", re.I)
 # "overall", "in total" — the user is stepping out of the thread on purpose.
-_ALL_CUE = re.compile(r"\b(overall|in total|all categories|everything|across all|altogether|all (?:the |my |our |these |those )?(?:expenses?|transactions?|spends?|spending|payments?))\b", re.I)
+_ALL_CATEGORIES_CUE = re.compile(
+    r"\ball (?:the |my |our |these |those )?(?:(?:income|expense) )?(?:expenses?|transactions?|"
+    r"spends?|spending|payments?|income|expense)\b|\ball categories\b", re.I)
+# "overall" / "in total" mean all time, but only when no period is named:
+# "everything from September" is all categories in September.
+_ALL_TIME_CUE = re.compile(
+    r"\b(overall|in total|everything|across all|altogether)\b", re.I)
+_ALL_CUE = re.compile(f"(?:{_ALL_CATEGORIES_CUE.pattern})|(?:{_ALL_TIME_CUE.pattern})", re.I)
 # A question about a dimension (merchant, average…) is a follow-up even when it
 # names neither the category nor the month.
 _DIMENSION_Q = re.compile(
@@ -323,6 +330,8 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
     deictic = bool(_DEICTIC.search(text))
     correction = bool(_CORRECTION.search(text))
     all_cue = bool(_ALL_CUE.search(text))
+    # All time only when the message names no period of its own.
+    all_time = bool(_ALL_TIME_CUE.search(text)) and not month
     writing = bool(_WRITE_CUE.search(text))
     switch = bool(_SWITCH_CUE.search(message))
     # A write ("and delete it") is never a category request.
@@ -346,7 +355,18 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
     reason = "explicit" if (category or month) else "none"
 
     if all_cue:
-        reason = "user asked for the whole picture"
+        if all_time:
+            reason = "user asked for the whole picture"
+        else:
+            # All categories is a change of scope, not of period: the month the
+            # thread is already on survives unless the message names another.
+            category = None
+            comparison_target = None
+            if not month and isinstance(prior, dict):
+                month = prior.get("month")
+                kind = kind or prior.get("kind")
+            followup = bool(month)
+            reason = "all categories, kept the period" if month else "all categories"
     elif isinstance(prior, dict) and (prior.get("category") or prior.get("month")):
         if category and month:
             reason = "explicit category and month (new question)"
@@ -373,6 +393,17 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
     if isinstance(prior, dict) and (correction or switch) and not month:
         month = prior.get("month")
 
+    # A comparison asks about a period the user did not restate, so it inherits
+    # the thread's month — even when one of the two categories turns out not to
+    # exist, so the clarification still says which period it is about. An
+    # explicit month wins, and a reset or expired thread has none to give.
+    wants_comparison = bool(_COMPARE_CUE.search(text)) and not writing
+    if (comparison_target or wants_comparison) and not month and isinstance(prior, dict):
+        month = prior.get("month")
+        followup = bool(month)
+        if month:
+            reason = "comparison kept the period"
+
     if correction and not followup and not (category or month):
         reason = "correction with nothing to correct"
 
@@ -398,7 +429,8 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
         "ambiguous": ambiguous,
         "question": question,
         "expired": expired,
-        "reset": all_cue,
+        "all_categories": all_cue and not all_time,
+        "reset": all_time,
         "turn": prior.get("turn") if isinstance(prior, dict) else None,
         "reason": reason,
     }
