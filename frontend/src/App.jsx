@@ -33,11 +33,15 @@ const money = n => {
     const value = Number(n || 0);
     return (Math.abs(value - Math.round(value)) > 0.004 ? MONEY_PAISE : MONEY_WHOLE).format(value);
 };
-const today = () => new Date().toISOString().slice(0, 10);
+// Calendar dates come from the device's own clock. `toISOString()` is UTC, so an
+// IST user between midnight and 05:30 got yesterday — exactly when a transaction
+// gets logged. Local getters only, the same convention as life/store.js.
+const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = () => isoDay(new Date());
 const yesterday = () => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
+    return isoDay(d);
 };
 const thisMonthStr = () => today().slice(0, 7);
 
@@ -60,20 +64,22 @@ const monthLabel = value => {
     return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 };
 
-const getCurrentMonthRange = () => {
-    const todayDate = new Date();
-    const curYear = todayDate.getFullYear();
-    const curMonth = todayDate.getMonth();
-    const mStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}`;
-    const lastDay = new Date(curYear, curMonth + 1, 0).getDate();
+// One local Date in, one internally consistent month range out: the day bounds,
+// the "YYYY-MM" key and the label all come from the same calendar month, so the
+// end date can never be an impossible day (the old code mixed a UTC month with a
+// local last-day and produced "2026-11-31").
+const monthRange = d => {
+    const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
     return {
-        preset: 'this_month',
         startDate: `${mStr}-01`,
         endDate: `${mStr}-${String(lastDay).padStart(2, '0')}`,
-        label: todayDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
+        label: d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
         month: mStr,
     };
 };
+
+const getCurrentMonthRange = () => ({ preset: 'this_month', ...monthRange(new Date()) });
 
 // Default categories and payment methods
 const DEFAULT_EXPENSE_CATS = [
@@ -773,15 +779,7 @@ function DateRangeFilter({ range, onChange, txRange }) {
                 month: 'all',
             });
         } else if (preset === 'this_month') {
-            const mStr = thisMonthStr();
-            const lastDay = new Date(curYear, curMonth + 1, 0).getDate();
-            onChange({
-                preset: 'this_month',
-                startDate: `${mStr}-01`,
-                endDate: `${mStr}-${String(lastDay).padStart(2, '0')}`,
-                label: new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
-                month: mStr,
-            });
+            onChange({ preset: 'this_month', ...monthRange(todayDate) });
         } else if (preset === 'last_month') {
             const prevDate = new Date(curYear, curMonth - 1, 1);
             const prevYear = prevDate.getFullYear();
