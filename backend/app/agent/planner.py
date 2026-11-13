@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
 
@@ -318,6 +319,17 @@ _RANK_CUE = re.compile(
     r"|\brank\b[^?]{0,30}\b(?:expenses?|categor(?:y|ies))\b",
     re.I)
 _RANK_LIMIT = re.compile(r"\btop\s+(\d{1,2})\b", re.I)
+# "Is this expense unusual?", "unusually high", "much higher than normal",
+# "outlier" — a question about individual expenses against their own history.
+_UNUSUAL_CUE = re.compile(
+    r"\bunusual(?:ly)?\b"
+    r"|\b(?:much|far|way)\s+(?:higher|bigger|larger)\s+than\s+(?:normal|usual|typical|average|before)\b"
+    r"|\babnormally\b|\boutliers?\b|\bout of the ordinary\b",
+    re.I)
+_RUPEE_AMOUNT = re.compile(r"₹\s*([\d,]+(?:\.\d{1,2})?)")
+_RECENT_REFERENCE = re.compile(
+    r"\b(?:this|that|the last|the latest)\s+(?:one|expense|transaction|charge|payment|bill)\b",
+    re.I)
 _KIND_INCOME = re.compile(r"\bincome\b|\bsalary\b|\bearned\b|\breceived\b", re.I)
 _KIND_EXPENSE = re.compile(r"\bspend|\bspent\b|\bspending\b|\bexpense|\bcost\b|\bpaid\b|\bpurchase|\bbill", re.I)
 
@@ -505,6 +517,33 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     # A change of records runs no query and leaves the analytics thread alone.
     if _is_write_request(text):
         return done(None, {}, None)
+
+    # An unusual-expense question is about individual outliers against each
+    # category's own history. It runs before the category and ambiguity checks:
+    # "is this expense unusual?" is answerable, not a request for clarification,
+    # and "unusual expenses" is not a category the user was naming.
+    if _UNUSUAL_CUE.search(text) and not _WRITE_CUE.search(text):
+        named_amount = _RUPEE_AMOUNT.search(message)
+        probe = None
+        if named_amount:
+            try:
+                probe = Decimal(named_amount.group(1).replace(",", ""))
+            except InvalidOperation:
+                probe = None
+        explicit_category = mentioned[0] if mentioned else None
+        scope_year = None
+        if not month:
+            named_year = _YEAR_RE.search(text)
+            if named_year:
+                scope_year = int(named_year.group(1))
+            elif re.search(r"\bthis year\b|\bcurrent year\b|\byear\b(?!s)", text):
+                scope_year = today.year - 1 if re.search(r"\blast year\b", text) else today.year
+        facts = analytics.unusual_expenses(
+            db, user, month=month, year=scope_year, category=explicit_category,
+            recent=bool(_RECENT_REFERENCE.search(message)), probe_amount=probe)
+        return done("unusual_expenses",
+                    {"month": month, "year": scope_year, "category": explicit_category,
+                     "probe": probe is not None}, facts)
 
     # A category the user named but does not have must never become "all
     # categories": ask, and keep the period the thread was already on.

@@ -375,6 +375,8 @@ Rules:
 
 29. Category-ranking FACTS carry "scope" (a month like "2026-11", a year like "2026", or "all time"), the window's "total" and "count", and "categories" — the top "limit" ranks, each with its own "total", "count" and "share_pct". These ranks come from the database: answer "which category" with the first entry, name its total, then list the rest in order. Never re-sort, re-add or merge them, never call the window's total one category, and if STATUS is no_data say there is nothing in that period rather than quoting zero.
 
+30. Unusual-expense FACTS are database evidence: "<median> + MAD" gave each "anomalies" entry its "median" (the category's usual amount), "difference" and "ratio" (how many times the median it is), "z" and "history_count". Name the transaction's date and category, its amount, the usual amount and the ratio. STATUS ok with an empty "anomalies" list means nothing was unusually high — say exactly that. STATUS insufficient_history or a non-empty "categories_needing_history" means there is too little history to judge: say so and never call an amount unusual anyway. When a "probe" object is present the user named that amount: use its "unusual", "ratio" and "median" as given. Never compute your own baseline, threshold or z-score.
+
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
 Use "actions": [] when nothing should change.

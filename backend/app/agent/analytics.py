@@ -367,6 +367,185 @@ def category_ranking(db: Session, user, *, month: str | None = None, year: int |
     }
 
 
+# ── unusual expenses ─────────────────────────────────────────────────────────
+
+# A month or two of a category is not a distribution: with fewer than this many
+# earlier expenses, "unusual" would be a guess, so the function says so instead.
+MIN_HISTORY = 5
+# Iglewicz & Hoaglin's cut-off for the modified z-score (0.6745·|x−median|/MAD).
+OUTLIER_Z = Decimal("3.5")
+# MAD is the median of absolute deviations, so it rescales to a sigma-like unit.
+MAD_TO_SIGMA = Decimal("1.4826")
+CANDIDATE_LIMIT = 50
+BASELINE_LIMIT = 5000
+
+
+def _median(values: list[Decimal]) -> Decimal:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _baseline(amounts: list[Decimal]) -> tuple[Decimal, Decimal]:
+    median = _median(amounts)
+    return median, _median([abs(value - median) for value in amounts])
+
+
+def _judge(amount: Decimal, history: list[Decimal]) -> dict | None:
+    """How far one expense sits from its category's own history, or None if thin.
+
+    Modified z-score against median absolute deviation: robust to the very
+    outliers it is looking for, and it needs no assumption about the shape of
+    the distribution. When more than half a category's amounts are identical the
+    MAD is 0, so the fallback is a median multiple — still deterministic.
+    """
+    if len(history) < MIN_HISTORY:
+        return None
+    median, mad = _baseline(history)
+    difference = amount - median
+    if median > 0:
+        ratio = (amount / median).quantize(Decimal("0.01"))
+    else:
+        ratio = None
+    if mad > 0:
+        sigma = mad * MAD_TO_SIGMA
+        z = ((amount - median) / sigma).quantize(Decimal("0.01"))
+        unusual = z >= OUTLIER_Z
+        rule = "modified_z"
+    else:
+        sigma = z = None
+        unusual = amount >= median * 2 and difference > 0
+        rule = "median_multiple"
+    return {
+        "median": median, "mad": mad, "sigma": sigma, "z": z, "ratio": ratio,
+        "difference": difference, "history_count": len(history),
+        "unusual": bool(unusual and difference > 0), "rule": rule,
+    }
+
+
+def unusual_expenses(db: Session, user, *, month: str | None = None, year: int | None = None,
+                     category: str | None = None, limit: int = 5, recent: bool = False,
+                     probe_amount: Decimal | None = None) -> dict:
+    """Individual expenses far above their own category's history.
+
+    Every candidate is compared with the category's other expenses — never with
+    the candidate itself, never with income — and only a *higher* amount can be
+    flagged. Nothing is inferred from a category with too little history.
+    """
+    start = end = None
+    scope = "all time"
+    if month:
+        start, end = month_bounds(month)
+        scope = month
+    elif year is not None:
+        start, end = date(int(year), 1, 1), date(int(year), 12, 31)
+        scope = f"{int(year):04d}"
+    limit = 5 if limit is None else max(1, min(int(limit), 20))
+
+    matched: list[str] = []
+    if category:
+        matched = match_categories(db, user, category)
+        if not matched:
+            return {"status": "unknown_category", "category": category, "scope": scope,
+                    "known_categories": categories(db, user),
+                    "message": f'You have no category called "{category}".'}
+
+    def history_for(label: str | None, exclude_id):
+        key = (label or "").lower()
+        query = _filtered(db, user, kind="expense")
+        if label is None or label == "":
+            query = query.filter(or_(models.Transaction.category.is_(None),
+                                     models.Transaction.category == ""))
+        else:
+            query = query.filter(func.lower(models.Transaction.category) == key)
+        if exclude_id is not None:
+            query = query.filter(models.Transaction.id != exclude_id)
+        return [money.to_money(value, default=money.ZERO)
+                for (value,) in query.with_entities(models.Transaction.amount)
+                .limit(BASELINE_LIMIT).all()]
+
+    # The window holds only expenses (income is never a candidate).
+    window = _filtered(db, user, start=start, end=end, kind="expense")
+    if matched:
+        window = window.filter(func.lower(models.Transaction.category).in_(
+            [name.lower() for name in matched]))
+    if recent:
+        candidates = (window.order_by(models.Transaction.txn_date.desc(),
+                                      models.Transaction.id.desc())
+                      .limit(max(limit, 5)).all())
+    else:
+        candidates = (window.order_by(models.Transaction.amount.desc(),
+                                      models.Transaction.id.asc())
+                      .limit(CANDIDATE_LIMIT).all())
+    if not candidates:
+        return {"status": "no_data", "scope": scope, "month": month, "year": year,
+                "category": matched[0] if matched else None, "limit": limit,
+                "candidates": 0, "evaluated": 0, "count": 0, "anomalies": [],
+                "categories_needing_history": []}
+
+    anomalies, thin, evaluated = [], set(), 0
+    for row in candidates:
+        history = history_for(row.category, row.id)
+        verdict = _judge(money.to_money(row.amount, default=money.ZERO), history)
+        if verdict is None:
+            thin.add(row.category or "Other")
+            continue
+        evaluated += 1
+        if not verdict["unusual"]:
+            continue
+        anomalies.append({
+            "id": row.id,
+            "date": row.txn_date.isoformat(),
+            "description": row.description,
+            "category": row.category or "Other",
+            "amount": money.number(row.amount),
+            "median": money.number(verdict["median"]),
+            "mad": money.number(verdict["mad"]),
+            "difference": money.number(verdict["difference"]),
+            "ratio": float(verdict["ratio"]) if verdict["ratio"] is not None else None,
+            "z": float(verdict["z"]) if verdict["z"] is not None else None,
+            "history_count": verdict["history_count"],
+            "rule": verdict["rule"],
+        })
+
+    anomalies.sort(key=lambda a: (a["z"] if a["z"] is not None else a["ratio"] or 0), reverse=True)
+    facts = {
+        "status": "ok" if evaluated else "insufficient_history",
+        "scope": scope,
+        "month": month,
+        "year": year,
+        "category": matched[0] if matched else None,
+        "method": "median + MAD (modified z-score)",
+        "threshold": float(OUTLIER_Z),
+        "min_history": MIN_HISTORY,
+        "limit": limit,
+        "candidates": len(candidates),
+        "evaluated": evaluated,
+        "count": min(len(anomalies), limit),
+        "anomalies": anomalies[:limit],
+        "categories_needing_history": sorted(thin),
+    }
+
+    if probe_amount is not None:
+        label = matched[0] if matched else (candidates[0].category or "Other")
+        history = history_for(label, None)
+        verdict = _judge(money.to_money(probe_amount, default=money.ZERO), history)
+        facts["probe"] = None if verdict is None else {
+            "amount": money.number(probe_amount),
+            "category": label,
+            "median": money.number(verdict["median"]),
+            "difference": money.number(verdict["difference"]),
+            "ratio": float(verdict["ratio"]) if verdict["ratio"] is not None else None,
+            "z": float(verdict["z"]) if verdict["z"] is not None else None,
+            "history_count": verdict["history_count"],
+            "unusual": verdict["unusual"],
+            "rule": verdict["rule"],
+        }
+    return facts
+
+
 # ── monthly analytics ────────────────────────────────────────────────────────
 
 def monthly_series(db: Session, user, months: int | None = None, year: int | None = None) -> dict:
