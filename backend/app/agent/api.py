@@ -67,6 +67,25 @@ class ConversationIn(BaseModel):
     title: str = ""
 
 
+def _last_analytics_context(prior: list[models.ChatMessage]) -> dict | None:
+    """The most recent turn's analytics filters, if this conversation had one.
+
+    The newest assistant message wins even when it recorded "no context": that
+    is how an explicit "overall" clears an old topic instead of resurrecting it.
+    """
+    for message in reversed(prior):
+        if message.role != "assistant":
+            continue
+        try:
+            meta = json.loads(message.meta or "{}")
+        except ValueError:
+            continue
+        if "analytics" in meta:
+            context = meta["analytics"]
+            return context if isinstance(context, dict) else None
+    return None
+
+
 class MessageIn(BaseModel):
     message: str
     # "", "local:<ollama model>" or "cloud:<model id>" from the model picker.
@@ -185,6 +204,7 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         .all()
     )
     history = [{"role": m.role, "content": m.content} for m in prior if m.content]
+    chat_context = _last_analytics_context(prior)
 
     db.add(models.ChatMessage(
         conversation_id=conversation_id, user_id=user.id, role="user", content=text, meta="{}",
@@ -193,7 +213,8 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
 
     try:
         result = graph.run_turn(db, user, conversation_id, text, history, turn=len(prior) // 2 + 1,
-                                prefer=(data.prefer or "").strip()[:80], today=today)
+                                prefer=(data.prefer or "").strip()[:80], today=today,
+                                chat_context=chat_context)
     except providers.ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
 
@@ -222,6 +243,10 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         "degraded": result.get("degraded", ""),
         "note": result.get("note", ""),
     }
+    # Filters only: the next request inherits them and re-queries every figure.
+    settled = result.get("chat_context")
+    meta["analytics"] = (settled if isinstance(settled, dict)
+                         and (settled.get("category") or settled.get("month")) else None)
     assistant = models.ChatMessage(
         conversation_id=conversation_id,
         user_id=user.id,

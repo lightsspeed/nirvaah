@@ -1,0 +1,354 @@
+"""Conversation continuity: the thread keeps its filters, never its figures.
+
+The acceptance conversation is the test: Groceries and April are established in
+turn 1, and turns 2-5 change one dimension at a time without the user repeating
+themselves. Every figure here is recomputed from SQL on the turn that quotes it.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date, timedelta
+from decimal import Decimal
+
+import pytest
+
+from app import models
+from app.agent import graph, planner
+
+
+TODAY = date(2026, 11, 13)
+APRIL_TOTAL = Decimal("7897.00")
+
+
+@pytest.fixture()
+def groceries(db, user):
+    """38 April grocery rows (7,897.00), a May month, Fuel in April, power in May."""
+    amounts = [Decimal("207.82")] * 37 + [APRIL_TOTAL - Decimal("207.82") * 37]
+    for index, amount in enumerate(amounts):
+        db.add(models.Transaction(
+            user_id=user.id, kind="expense", amount=amount, category="Groceries",
+            description="BigBasket", payment_method="SBI",
+            txn_date=date(2026, 4, 1) + timedelta(days=index % 30),
+        ))
+    db.add(models.Transaction(user_id=user.id, kind="expense", amount=Decimal("2000.00"),
+                              category="Fuel", description="HP Petrol", payment_method="SBI",
+                              txn_date=date(2026, 4, 18)))
+    for day, amount in ((3, Decimal("300.00")), (17, Decimal("400.00")), (28, Decimal("200.00"))):
+        db.add(models.Transaction(user_id=user.id, kind="expense", amount=amount,
+                                  category="Groceries", description="More Supermarket",
+                                  payment_method="UPI", txn_date=date(2026, 5, day)))
+    db.add(models.Transaction(user_id=user.id, kind="expense", amount=Decimal("1500.00"),
+                              category="Electricity", description="BESCOM", payment_method="UPI",
+                              txn_date=date(2026, 5, 9)))
+    db.commit()
+    return user
+
+
+def context(category="Groceries", month="2026-04", kind="expense", turn=1):
+    return {"intent": "category_series", "category": category, "month": month, "kind": kind,
+            "comparison_target": None, "turn": turn, "updated_at": "2026-11-13T10:00:00Z"}
+
+
+# ── A. the resolution table, as a pure function ────────────────────────────
+
+@pytest.mark.parametrize("message,expected", [
+    ("Why was April highest?", ("Groceries", "2026-04", True)),
+    ("What about May?", ("Groceries", "2026-05", True)),
+    ("Show me those transactions", ("Groceries", "2026-04", True)),
+    ("No, I meant fuel", ("Fuel", "2026-04", True)),
+    ("What about fuel?", ("Fuel", "2026-04", True)),
+    ("What is my electricity bill?", ("Electricity", None, False)),
+    ("Which merchant contributed most?", ("Groceries", "2026-04", True)),
+])
+def test_the_resolution_table(db, groceries, message, expected):
+    pool = ["Groceries", "Fuel", "Electricity"]
+    resolved = planner.resolve_followup(message, context(), TODAY, pool=pool, turn=2)
+
+    assert (resolved["category"], resolved["month"], resolved["followup"]) == expected
+    assert resolved["ambiguous"] is False
+
+
+def test_a_reference_with_no_context_asks_instead_of_guessing():
+    resolved = planner.resolve_followup("Show me those transactions", None, TODAY)
+
+    assert resolved["ambiguous"] is True
+    assert "which transactions" in resolved["question"].lower()
+
+
+def test_an_explicit_category_and_month_start_a_new_question():
+    resolved = planner.resolve_followup("List groceries in June", context(), TODAY,
+                                        pool=["Groceries"], turn=2)
+
+    assert (resolved["category"], resolved["month"], resolved["followup"]) == ("Groceries", "2026-06", False)
+
+
+def test_context_expires_after_the_ttl():
+    old = context(turn=1)
+    fresh = planner.resolve_followup("Why was April highest?", old, TODAY,
+                                     pool=["Groceries"], turn=1 + planner.CONTEXT_TTL_TURNS)
+    stale = planner.resolve_followup("Why was April highest?", old, TODAY,
+                                     pool=["Groceries"], turn=2 + planner.CONTEXT_TTL_TURNS)
+
+    assert fresh["category"] == "Groceries" and fresh["expired"] is False
+    assert stale["category"] is None and stale["expired"] is True
+
+
+def test_overall_clears_the_thread():
+    resolved = planner.resolve_followup("How much did I spend overall?", context(), TODAY,
+                                        pool=["Groceries"], turn=2)
+
+    assert resolved["reset"] is True
+    assert resolved["category"] is None
+
+
+# ── B. the planner uses the resolved filters ───────────────────────────────
+
+def test_why_was_april_highest_gets_april_groceries(db, groceries):
+    analysis = planner.analyse(db, groceries, "Why was April highest?", today=TODAY,
+                               context=context(), turn=2)
+
+    assert analysis["intent"] == "category_month"
+    assert analysis["facts"]["categories"] == ["Groceries"]
+    assert analysis["facts"]["month"] == "2026-04"
+    assert analysis["facts"]["count"] == 38
+    assert analysis["facts"]["total"] == 7897.0
+
+
+def test_what_about_may_keeps_groceries_and_moves_the_month(db, groceries):
+    analysis = planner.analyse(db, groceries, "What about May?", today=TODAY,
+                               context=context(), turn=2)
+
+    assert analysis["intent"] == "category_month"
+    assert analysis["facts"]["categories"] == ["Groceries"]
+    assert analysis["facts"]["month"] == "2026-05"
+    assert analysis["facts"]["count"] == 3
+    assert analysis["facts"]["total"] == 900.0
+
+
+def test_those_transactions_means_the_previous_filters(db, groceries):
+    analysis = planner.analyse(db, groceries, "Show me those transactions", today=TODAY,
+                               context=context(), turn=4)
+
+    assert analysis["intent"] == "list_transactions"
+    facts = analysis["facts"]
+    assert (facts["category"], facts["month"], facts["count"]) == ("Groceries", "2026-04", 38)
+    assert len(facts["transactions"]) == 38
+
+
+def test_a_correction_replaces_only_the_category(db, groceries):
+    analysis = planner.analyse(db, groceries, "No, I meant fuel", today=TODAY,
+                               context=context(), turn=3)
+
+    assert analysis["intent"] == "category_month"
+    assert analysis["facts"]["categories"] == ["Fuel"]
+    assert analysis["facts"]["month"] == "2026-04"
+    assert analysis["facts"]["total"] == 2000.0
+
+
+def test_what_about_a_named_category_keeps_the_period(db, groceries):
+    analysis = planner.analyse(db, groceries, "What about fuel?", today=TODAY,
+                               context=context(), turn=3)
+
+    assert analysis["intent"] == "category_month"
+    assert analysis["facts"]["categories"] == ["Fuel"]
+    assert analysis["facts"]["month"] == "2026-04"
+
+
+def test_a_new_topic_does_not_inherit_groceries(db, groceries):
+    analysis = planner.analyse(db, groceries, "What is my electricity bill?", today=TODAY,
+                               context=context(), turn=3)
+
+    assert analysis["facts"]["categories"] == ["Electricity"]
+    assert analysis["context"]["month"] is None
+    assert analysis["context"]["category"] == "Electricity"
+
+
+def test_merchants_answer_for_the_inherited_period(db, groceries):
+    analysis = planner.analyse(db, groceries, "Which merchant contributed most?", today=TODAY,
+                               context=context(month="2026-05", turn=4), turn=5)
+
+    assert analysis["intent"] == "merchants"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert "More Supermarket" in {m["merchant"] for m in analysis["facts"]["merchants"]}
+
+
+def test_aggregate_routing_is_unchanged_by_context(db, groceries):
+    analysis = planner.analyse(db, groceries, "How much did I spend on groceries in April?",
+                               today=TODAY, context=context(), turn=2)
+
+    assert analysis["intent"] == "category_month"
+    assert "transactions" not in analysis["facts"]
+
+
+# ── C. across separate HTTP requests in one conversation ───────────────────
+
+@pytest.fixture()
+def client(db, user):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+    from app.security import get_current_user
+
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _conversation(client, title="thread"):
+    response = client.post("/api/chat/conversations", json={"title": title})
+    assert response.status_code == 200
+    return response.json()["id"]
+
+
+def _ask(client, conversation_id, message):
+    response = client.post(f"/api/chat/conversations/{conversation_id}/messages",
+                           json={"message": message})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_acceptance_conversation_survives_separate_requests(db, groceries, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+    assert "VERIFIED ANALYTICS (intent: category_series)" in model.last_system
+
+    _ask(client, conversation_id, "Why was April highest?")
+    assert "VERIFIED ANALYTICS (intent: category_month)" in model.last_system
+    assert '"category": "Groceries"' in model.last_system
+    assert '"month": "2026-04"' in model.last_system
+    assert '"total": 7897.0' in model.last_system
+
+    _ask(client, conversation_id, "List down the groceries spends of April.")
+    assert "VERIFIED ANALYTICS (intent: list_transactions)" in model.last_system
+    assert '"transactions": [' in model.last_system
+
+    _ask(client, conversation_id, "What about May?")
+    assert "VERIFIED ANALYTICS (intent: category_month)" in model.last_system
+    assert '"month": "2026-05"' in model.last_system
+    assert '"total": 900.0' in model.last_system
+
+    _ask(client, conversation_id, "Which merchant contributed most?")
+    assert "VERIFIED ANALYTICS (intent: merchants)" in model.last_system
+    assert '"month": "2026-05"' in model.last_system
+
+
+def test_the_filters_are_persisted_but_not_the_figures(db, groceries, client, scripted):
+    scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+
+    rows = (db.query(models.ChatMessage)
+            .filter(models.ChatMessage.conversation_id == conversation_id,
+                    models.ChatMessage.role == "assistant")
+            .all())
+    meta = json.loads(rows[-1].meta)
+    stored = meta["analytics"]
+
+    assert set(stored) == {"intent", "category", "month", "kind", "comparison_target", "turn", "updated_at"}
+    assert stored["category"] == "Groceries" and stored["intent"] == "category_series"
+    assert "total" not in stored and "transactions" not in stored
+
+
+def test_context_after_a_first_turn_is_stored_and_reused(db, groceries, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+
+    rows = (db.query(models.ChatMessage)
+            .filter(models.ChatMessage.conversation_id == conversation_id,
+                    models.ChatMessage.role == "assistant")
+            .all())
+    stored = json.loads(rows[-1].meta)["analytics"]
+    assert stored["category"] == "Groceries" and stored["intent"] == "category_series"
+
+    _ask(client, conversation_id, "Why was April highest?")
+    assert "THREAD CONTEXT: category=Groceries" in model.last_system
+
+
+def test_an_unresolved_reference_asks_before_answering(db, groceries, client, scripted):
+    model = scripted({"reply": "Here are some numbers.", "actions": []})
+    conversation_id = _conversation(client)
+
+    reply = _ask(client, conversation_id, "Show me those transactions")
+
+    assert "which transactions do you mean" in reply["content"].lower()
+    assert "STATUS: ambiguous" in model.last_system
+    assert "VERIFIED ANALYTICS (intent:" in model.last_system
+
+
+def test_conversations_do_not_share_context(db, groceries, client, scripted):
+    scripted({"reply": "ok", "actions": []})
+    first = _conversation(client, "first")
+    _ask(client, first, "How much are we spending on groceries on average?")
+
+    model = scripted({"reply": "ok", "actions": []})
+    second = _conversation(client, "second")
+    _ask(client, second, "Why was April highest?")
+
+    assert "VERIFIED ANALYTICS (intent:" not in model.last_system
+    assert "THREAD CONTEXT: category=" not in model.last_system
+
+
+def test_old_messages_without_analytics_metadata_are_ignored(db, groceries, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    db.add(models.ChatMessage(conversation_id=conversation_id, user_id=groceries.id,
+                              role="assistant", content="old reply", meta="{}"))
+    db.commit()
+
+    _ask(client, conversation_id, "Why was April highest?")
+
+    assert "VERIFIED ANALYTICS (intent:" not in model.last_system
+
+
+# ── D. freshness and write safety ──────────────────────────────────────────
+
+def test_a_previous_total_is_never_reused(db, groceries, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+
+    victim = (db.query(models.Transaction)
+              .filter(models.Transaction.user_id == groceries.id,
+                      models.Transaction.category == "Groceries",
+                      models.Transaction.txn_date >= date(2026, 4, 1),
+                      models.Transaction.txn_date < date(2026, 5, 1))
+              .first())
+    expected = Decimal("7897.00") - Decimal(str(victim.amount))
+    db.delete(victim)
+    db.commit()
+
+    _ask(client, conversation_id, "Why was April highest?")
+    assert f'"total": {json.dumps(float(expected))}' in model.last_system
+
+
+def test_analytics_context_cannot_delete_anything(db, groceries, client, scripted):
+    scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+    before = db.query(models.Transaction).count()
+
+    # The model asks to delete "those" without naming a record; the context must not stand in for one.
+    scripted({"reply": "Removing those.", "actions": [{"op": "delete_transaction"}]})
+    reply = _ask(client, conversation_id, "Delete those transactions")
+
+    db.expire_all()
+    assert db.query(models.Transaction).count() == before
+    assert reply["content"]
+
+
+def test_a_clarification_turn_executes_nothing(db, user, conversation, scripted):
+    scripted({"reply": "Deleting now.", "actions": [{"op": "delete_transaction", "id": "anything"}]})
+    before = db.query(models.Transaction).count()
+
+    result = graph.run_turn(db, user, conversation.id, "Show me those transactions", [], turn=1)
+
+    db.expire_all()
+    assert result["applied"] == [] and result["pending"] == []
+    assert db.query(models.Transaction).count() == before
+    assert "which transactions do you mean" in result["reply"].lower()

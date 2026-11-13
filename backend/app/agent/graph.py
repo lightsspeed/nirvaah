@@ -78,6 +78,7 @@ class ChatState(TypedDict, total=False):
     steps: list[str]
     retried: bool
     analytics: dict
+    chat_context: dict
     focus: dict
     data_range: dict
     conversation_id: str
@@ -145,6 +146,7 @@ def _facts_block(analysis: dict) -> str:
     if status and status != "ok":
         instruction = {
             "unknown_category": "That category does not exist in the user's data. Say so; never say zero.",
+            "ambiguous": "The reference is not clear. Ask exactly the question in FACTS and do not guess.",
             "no_data": "There are no transactions in that range. Say the range is empty; never say zero.",
             "no_data_for_category": "That category has no spending in that range. Say exactly that.",
         }.get(status, "That range could not be read. Say so plainly; never invent a figure.")
@@ -175,8 +177,10 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         snapshot = build_snapshot(db, user, resolve_focus_month(message, today=business_day), today=business_day)
         memories = _memories(db, user)
 
+        thread_context = state.get("chat_context") or None
         with obs.timed("plan"):
-            analysis = planner.analyse(db, user, message, today=business_day)
+            analysis = planner.analyse(db, user, message, today=business_day,
+                                       context=thread_context, turn=turn)
         data_range = planner.available_range(db, user)
         current_focus = focus_mod.get(db, user, conversation_id) if conversation_id else None
 
@@ -184,6 +188,17 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         facts = _facts_block(analysis)
         if facts:
             system += "\n\n" + facts
+        carried = analysis.get("context") or thread_context or {}
+        # Only claim continuity when there really was an earlier thread.
+        if thread_context and (thread_context.get("category") or thread_context.get("month"))                 and (carried.get("category") or carried.get("month")):
+            bits = []
+            if carried.get("category"):
+                bits.append(f"category={carried['category']}")
+            if carried.get("month"):
+                bits.append(f"month={carried['month']}")
+            system += ("\n\nTHREAD CONTEXT: " + " ".join(bits) +
+                       " (filters carried from earlier turns, not figures — answer from FACTS "
+                       "and never reuse an earlier number).")
         if current_focus:
             system += (
                 "\n\nCURRENT FOCUS: this conversation is about "
@@ -215,6 +230,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             "memories": memories,
             "system": system,
             "analytics": analysis,
+            "chat_context": carried,
             "focus": current_focus or {},
             "data_range": data_range,
             "steps": ["recall"],
@@ -280,6 +296,11 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
     def act(state: ChatState) -> dict:
         results: list[dict] = []
         message = state.get("message") or ""
+        facts = (state.get("analytics") or {}).get("facts")
+        if isinstance(facts, dict) and facts.get("status") == "ambiguous":
+            # A clarifying question must not change records, whatever the model returned.
+            return {"results": [], "applied": [], "pending": [], "failed": [],
+                    "steps": (state.get("steps") or []) + ["act"]}
 
         for raw_action in (state.get("actions") or [])[:10]:
             action = focus_mod.apply(db, user, conversation_id, raw_action, message)
@@ -349,7 +370,9 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         analysis = state.get("analytics") or {}
         facts = analysis.get("facts")
 
-        if failed and not applied and not pending:
+        if isinstance(facts, dict) and facts.get("status") == "ambiguous":
+            reply = facts.get("question") or "Which transactions do you mean?"
+        elif failed and not applied and not pending:
             # The execution layer's own words: "did not persist", "3 tasks match …"
             reply = failed[0].get("error") or "I could not do that — nothing was changed."
         elif not applied and not pending and not failed and claims_change(reply):
@@ -417,6 +440,7 @@ def run_turn(
     turn: int,
     prefer: str = "",
     today: date | None = None,
+    chat_context: dict | None = None,
 ) -> dict:
     """Run one turn of a conversation and return the reply plus what changed.
 
@@ -428,6 +452,7 @@ def run_turn(
     payload: ChatState = {
         "message": message,
         "history": history[-HISTORY_LIMIT:],
+        "chat_context": chat_context or {},
         "conversation_id": conversation_id,
         "turn": turn,
         # The checkpointer keeps a turn's channels until something overwrites

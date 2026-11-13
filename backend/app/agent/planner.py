@@ -16,6 +16,7 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from ..timeutil import iso_utc, utcnow
 from . import analytics
 from . import obs
 from .resolve import normalise
@@ -139,21 +140,182 @@ def _object_of_spending(text: str) -> str | None:
     return phrase or None
 
 
-def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
-    """Return {"intent", "facts"} — facts is None when no query applies."""
+# The thread's analytics filters live one turn at a time. They are read back on
+# the next request (assistant message meta) and expired after a few turns so an
+# old topic cannot quietly answer a new question.
+CONTEXT_TTL_TURNS = 6
+# "make it high priority", "change its due date" — a record request, not an
+# analytics one. chat_focus owns those; ambiguity here would block a write the
+# user clearly asked for.
+_WRITE_CUE = re.compile(
+    r"\b(add|create|update|change|move|reschedule|delete|remove|complete|mark|set|rename|"
+    r"remember|make|assign|log)\b", re.I)
+
+# "what about fuel?", "and April?" — a switch that names one dimension.
+_SWITCH_CUE = re.compile(r"^\s*(?:what|how)\s+about\b|^\s*and\b", re.I)
+
+# "those", "them", "the same one" — a reference with no words of its own.
+_DEICTIC = re.compile(
+    r"\b(it|its|that|those|these|them|they|the same|same one|the last one)\b", re.I)
+# "no, I meant fuel" — the user is correcting a dimension we already have.
+_CORRECTION = re.compile(r"\b(no|nope|not|i meant|i mean|actually|rather|instead)\b", re.I)
+# "overall", "in total" — the user is stepping out of the thread on purpose.
+_ALL_CUE = re.compile(r"\b(overall|in total|all categories|everything|across all|altogether)\b", re.I)
+# A question about a dimension (merchant, average…) is a follow-up even when it
+# names neither the category nor the month.
+_DIMENSION_Q = re.compile(
+    r"\b(merchant|largest|biggest|highest|lowest|most|least|recurring|subscription|trend|"
+    r"compare|average|avg|total|how much|how many|spend|spent|expense|expenses)\b", re.I)
+# "that month", "the other one" — a month reference we cannot pin down.
+_VAGUE_MONTH = re.compile(r"\b(other month|that month|the other one|some other month|another month)\b", re.I)
+_KIND_INCOME = re.compile(r"\bincome\b|\bsalary\b|\bearned\b|\breceived\b", re.I)
+_KIND_EXPENSE = re.compile(r"\bspend|\bspent\b|\bspending\b|\bexpense|\bcost\b|\bpaid\b|\bpurchase|\bbill", re.I)
+
+
+def _mentioned_categories(text: str, pool: list[str]) -> list[str]:
+    """Which of the user's real categories this text names, in pool order."""
+    mentioned = [c for c in pool if normalise(c) and normalise(c) in text]
+    if mentioned:
+        return mentioned
+    for candidate in pool:
+        tokens = [t for t in normalise(candidate).split() if len(t) >= 4]
+        if tokens and all(t in text or _singular(t) in text for t in tokens):
+            mentioned.append(candidate)
+    return mentioned
+
+
+def resolve_followup(message: str, prior: dict | None, today: date | None = None, *,
+                     pool: list[str] | None = None, turn: int | None = None) -> dict:
+    """Work out which analytics filters this message means.
+
+    Explicit words in the message always win. A recognised follow-up inherits
+    only the dimensions it leaves out — a month keeps the category, a correction
+    keeps the period — so "what about May?" stays on Groceries and "no, I meant
+    fuel" stays in April. Nothing financial is carried: filters only, never
+    figures or rows.
+    """
     today = today or date.today()
     text = normalise(message)
+    pool = pool or []
     month = resolve_month(message, today)
+    mentioned = _mentioned_categories(text, pool)
+    kind = "income" if _KIND_INCOME.search(text) else ("expense" if _KIND_EXPENSE.search(text) else None)
+
+    deictic = bool(_DEICTIC.search(text))
+    correction = bool(_CORRECTION.search(text))
+    all_cue = bool(_ALL_CUE.search(text))
+    writing = bool(_WRITE_CUE.search(text))
+    switch = bool(_SWITCH_CUE.search(message))
+
+    expired = False
+    if isinstance(prior, dict) and turn is not None and prior.get("turn") is not None:
+        try:
+            if int(turn) - int(prior["turn"]) > CONTEXT_TTL_TURNS:
+                prior, expired = None, True
+        except (TypeError, ValueError):
+            prior = None
+
+    category = mentioned[0] if mentioned else None
+    comparison_target = mentioned[1] if len(mentioned) > 1 else None
+    followup = False
+    reason = "explicit" if (category or month) else "none"
+
+    if all_cue:
+        reason = "user asked for the whole picture"
+    elif isinstance(prior, dict) and (prior.get("category") or prior.get("month")):
+        if category and month:
+            reason = "explicit category and month (new question)"
+        elif category:
+            if correction or deictic or switch:
+                month = month or prior.get("month")
+                kind = kind or prior.get("kind")
+                followup = bool(month)
+                reason = "corrected category, kept the period"
+        elif month:
+            category = prior.get("category")
+            kind = kind or prior.get("kind")
+            followup = bool(category)
+            reason = "month changed, kept the category"
+        elif deictic or _DIMENSION_Q.search(text):
+            category = prior.get("category")
+            month = prior.get("month")
+            kind = kind or prior.get("kind")
+            followup = bool(category or month)
+            reason = "follow-up on the previous question"
+
+    if correction and not followup and not (category or month):
+        reason = "correction with nothing to correct"
+
+    ambiguous = False
+    question = None
+    if deictic and not (category or month) and not writing:
+        ambiguous = True
+        question = ('Which transactions do you mean? Tell me the category and month — '
+                    'for example "Groceries in April".')
+        reason = "reference with no usable context"
+    elif _VAGUE_MONTH.search(text) and not month:
+        ambiguous = True
+        question = "Which month do you mean?"
+        reason = "month reference that cannot be pinned down"
+
+    return {
+        "category": category,
+        "month": month,
+        "kind": kind,
+        "comparison_target": comparison_target,
+        "followup": followup,
+        "ambiguous": ambiguous,
+        "question": question,
+        "expired": expired,
+        "reset": all_cue,
+        "turn": prior.get("turn") if isinstance(prior, dict) else None,
+        "reason": reason,
+    }
+
+
+def _next_context(resolved: dict, intent: str | None, prior: dict | None, turn: int | None) -> dict | None:
+    """The filters to remember for the next turn — no figures, no rows."""
+    if resolved.get("reset"):
+        return None
+    if intent == "clarify":
+        return prior if isinstance(prior, dict) else None
+    if intent and (resolved.get("category") or resolved.get("month")):
+        return {
+            "intent": intent,
+            "category": resolved.get("category"),
+            "month": resolved.get("month"),
+            "kind": resolved.get("kind"),
+            "comparison_target": resolved.get("comparison_target"),
+            "turn": turn,
+            "updated_at": iso_utc(utcnow()),
+        }
+    return prior if isinstance(prior, dict) else None
+
+
+def analyse(db: Session, user, message: str, today: date | None = None,
+            context: dict | None = None, turn: int | None = None) -> dict:
+    """Return {"intent", "facts", "context"} — facts is None when no query applies."""
+    today = today or date.today()
+    text = normalise(message)
     pool = analytics.categories(db, user)
 
     # A category only counts when it is one of this user's real categories.
-    mentioned = [c for c in pool if normalise(c) and normalise(c) in text]
-    if not mentioned:
-        # plural/partial forms: "grocery" for Groceries, "office eat" for Office eats
-        for candidate in pool:
-            tokens = [t for t in normalise(candidate).split() if len(t) >= 4]
-            if tokens and all(t in text or _singular(t) in text for t in tokens):
-                mentioned.append(candidate)
+    mentioned = _mentioned_categories(text, pool)
+    resolved = resolve_followup(message, context, today, pool=pool, turn=turn)
+    category = resolved["category"]
+    month = resolved["month"]
+    kind = resolved["kind"]
+
+    def done(intent, query, facts):
+        """Attach the filters this turn leaves behind for the next one."""
+        return {"intent": intent, "query": query, "facts": facts,
+                "context": _next_context(resolved, intent, context, turn)}
+
+    # A reference we cannot resolve is a question, not a guess.
+    if resolved["ambiguous"]:
+        return done("clarify", {"question": resolved["question"]},
+                    {"status": "ambiguous", "question": resolved["question"],
+                     "message": resolved["question"]})
 
     # A spend question about something that is not in the ledger at all.
     # Answering it with a figure (even a zero) is a fabrication, so name it.
@@ -162,28 +324,26 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
         if phrase and len(phrase) <= 40 and not re.search(r"\d", phrase) \
                 and not analytics.text_exists(db, user, phrase):
             if not analytics.match_categories(db, user, phrase):
-                return {
-                    "intent": "unknown_category",
-                    "query": {"phrase": phrase, "month": month},
-                    "facts": {
+                return done(
+                    "unknown_category",
+                    {"phrase": phrase, "month": month},
+                    {
                         "status": "unknown_category",
                         "category": phrase,
                         "month": month,
                         "known_categories": pool,
                         "message": (f"You have no category or transaction called \"{phrase}\" — I cannot give a figure for it."),
-                    },
-                }
+                    })
 
     # A listing request is answered with the records, not with a total. It is
     # checked before the category+month aggregate so "give me the details of
     # grocery spending in April" is not flattened into one number.
     if _LIST_CUES.search(text) and not _SUMMARY_CUES.search(text) \
-            and (mentioned or month or _LIST_NOUN_RE.search(text)):
-        category = mentioned[0] if mentioned else None
+            and (category or month or _LIST_NOUN_RE.search(text)):
         phrase = None if category else _listing_phrase(text)
-        kind = "income" if re.search(r"\bincome\b|\bsalary\b|\bearned\b|\breceived\b", text) else "expense"
+        listing_kind = kind or "expense"
         found = analytics.search(db, user, category=category, text=phrase, month=month,
-                                 kind=kind, limit=LIST_LIMIT)
+                                 kind=listing_kind, limit=LIST_LIMIT)
         rows = found.get("transactions") or []
         # Search's own totals stay authoritative; the model only re-states them.
         facts = {
@@ -191,7 +351,7 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
             "month": month,
             "category": category,
             "text": phrase,
-            "kind": kind,
+            "kind": listing_kind,
             "count": found.get("count", 0),
             "total": found.get("total", 0.0),
             "shown": len(rows),
@@ -202,18 +362,24 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
                 for row in rows
             ],
         }
-        return {"intent": "list_transactions",
-                "query": {"category": category, "text": phrase, "month": month, "kind": kind},
-                "facts": facts}
+        return done("list_transactions",
+                    {"category": category, "text": phrase, "month": month, "kind": listing_kind},
+                    facts)
 
     try:
-        if mentioned and month:
-            return {"intent": "category_month", "query": {"category": mentioned[0], "month": month},
-                    "facts": analytics.category_month(db, user, mentioned[0], month)}
+        # "which merchant contributed most?" is a question about merchants, even
+        # when the category and month were inherited — answer the question asked.
+        if re.search(r"\bmerchant|where did i spend|who did i pay|most frequent\b", text):
+            return done("merchants", {"month": month},
+                        analytics.merchants(db, user, month))
 
-        if mentioned:
-            facts = analytics.category_series(db, user, mentioned[0])
-            return {"intent": "category_series", "query": {"category": mentioned[0]}, "facts": facts}
+        if category and month:
+            return done("category_month", {"category": category, "month": month},
+                        analytics.category_month(db, user, category, month))
+
+        if category:
+            facts = analytics.category_series(db, user, category)
+            return done("category_series", {"category": category}, facts)
 
         if re.search(r"\bcompare\b|\bversus\b|\bvs\b|\bcompared to\b", text):
             found = re.findall(r"\b(" + "|".join(MONTH_NAMES) + r")\b", text, re.I)
@@ -223,42 +389,38 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
                 year = today.year if mon <= today.month else today.year - 1
                 months.append(f"{year:04d}-{mon:02d}")
             if len(months) >= 2:
-                return {"intent": "compare_months", "query": {"months": months[:2]},
-                        "facts": analytics.compare_months(db, user, months[0], months[1])}
-
-        if re.search(r"\bmerchant|where did i spend|who did i pay|most frequent\b", text):
-            return {"intent": "merchants", "query": {"month": month},
-                    "facts": analytics.merchants(db, user, month)}
+                return done("compare_months", {"months": months[:2]},
+                            analytics.compare_months(db, user, months[0], months[1]))
 
         if re.search(r"\brecurring|subscription|every month|monthly bill\b", text):
-            return {"intent": "recurring", "query": {}, "facts": analytics.recurring(db, user)}
+            return done("recurring", {}, analytics.recurring(db, user))
 
         if re.search(r"\blargest|biggest|highest\b.*\btransaction|\bmost expensive\b", text):
-            return {"intent": "largest_transactions", "query": {"month": month},
-                    "facts": analytics.highest_transactions(db, user, month=month)}
+            return done("largest_transactions", {"month": month},
+                        analytics.highest_transactions(db, user, month=month))
 
         if _wants_extremes(text) and re.search(r"\bmonth\b", text):
-            return {"intent": "extremes", "query": {}, "facts": analytics.extremes(db, user)}
+            return done("extremes", {}, analytics.extremes(db, user))
 
         if month and re.search(r"\bspend|spent|expense|saving|income|earn|budget\b", text):
-            return {"intent": "month_summary", "query": {"month": month},
-                    "facts": analytics.summary(db, user, month, today=today)}
+            return done("month_summary", {"month": month},
+                        analytics.summary(db, user, month, today=today))
 
         months_back = _months_back(message)
         if months_back or re.search(r"\btrend|over time|month by month|history\b", text):
-            return {"intent": "monthly_series", "query": {"months": months_back},
-                    "facts": analytics.monthly_series(db, user, months=months_back)}
+            return done("monthly_series", {"months": months_back},
+                        analytics.monthly_series(db, user, months=months_back))
 
         if re.search(r"\ball time\b|\bever\b|\bsince i started\b", text):
-            return {"intent": "all_time", "query": {},
-                    "facts": {"months": analytics.monthly_series(db, user),
-                              "extremes": analytics.extremes(db, user)}}
+            return done("all_time", {},
+                        {"months": analytics.monthly_series(db, user),
+                         "extremes": analytics.extremes(db, user)})
     except Exception as exc:  # noqa: BLE001 - analytics must never break a turn
         obs.inc("analytics_error")
         obs.event("analytics_error", error=str(exc)[:200], intent="planner")
-        return {"intent": "analytics_error", "query": {}, "facts": None, "error": str(exc)[:200]}
+        return {**done("analytics_error", {}, None), "error": str(exc)[:200]}
 
-    return {"intent": None, "query": {}, "facts": None}
+    return done(None, {}, None)
 
 
 def available_range(db: Session, user) -> dict:
