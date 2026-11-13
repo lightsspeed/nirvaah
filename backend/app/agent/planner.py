@@ -307,6 +307,17 @@ _DIMENSION_Q = re.compile(
     r"compare|average|avg|total|how much|how many|spend|spent|expense|expenses)\b", re.I)
 # "that month", "the other one" — a month reference we cannot pin down.
 _VAGUE_MONTH = re.compile(r"\b(other month|that month|the other one|some other month|another month)\b", re.I)
+# "Which category did I spend the most on?", "show my top 5 spending categories",
+# "rank my expenses by category" — a ranking *across* categories, so the single
+# category a thread was carrying is never the subject (Task 28.3).
+_RANK_CUE = re.compile(
+    r"\b(?:which|what)\s+categor(?:y|ies)\b[^?]{0,40}\b(?:most|highest|biggest|largest|top)\b"
+    r"|\b(?:most|highest|biggest|largest)\b[^?]{0,25}\bcategor(?:y|ies)\b"
+    r"|\btop\b[^?]{0,20}\bcategor(?:y|ies)\b"
+    r"|\bcategor(?:y|ies)\b[^?]{0,20}\b(?:rank|ranking|ranked|breakdown|wise)\b"
+    r"|\brank\b[^?]{0,30}\b(?:expenses?|categor(?:y|ies))\b",
+    re.I)
+_RANK_LIMIT = re.compile(r"\btop\s+(\d{1,2})\b", re.I)
 _KIND_INCOME = re.compile(r"\bincome\b|\bsalary\b|\bearned\b|\breceived\b", re.I)
 _KIND_EXPENSE = re.compile(r"\bspend|\bspent\b|\bspending\b|\bexpense|\bcost\b|\bpaid\b|\bpurchase|\bbill", re.I)
 
@@ -458,7 +469,7 @@ def _next_context(resolved: dict, intent: str | None, prior: dict | None, turn: 
         return prior if isinstance(prior, dict) else None
     # A merchant or listing answer has no filters to remember, but its shape is
     # what a later "what about June?" needs, so those turns are remembered too.
-    keeps_shape = intent in ("merchants", "list_transactions")
+    keeps_shape = intent in ("merchants", "list_transactions", "category_ranking")
     if intent and (resolved.get("category") or resolved.get("month") or keeps_shape):
         return {
             "intent": intent,
@@ -515,6 +526,26 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         return done("clarify", {"question": resolved["question"]},
                     {"status": "ambiguous", "question": resolved["question"],
                      "message": resolved["question"]})
+
+    # A ranking question asks across categories. It is answered before the
+    # single-category aggregates, and it drops whatever category the thread was
+    # carrying — the question is which category, not how much of one.
+    if _RANK_CUE.search(text) and not _WRITE_CUE.search(text) \
+            and not (_COMPARE_CUE.search(text) and resolved.get("comparison_target")):
+        top = _RANK_LIMIT.search(text)
+        limit = int(top.group(1)) if top else 5
+        rank_month, rank_year = month, None
+        if not rank_month:
+            named_year = _YEAR_RE.search(text)
+            if named_year:
+                rank_year = int(named_year.group(1))
+            elif re.search(r"\bthis year\b|\bcurrent year\b|\byear\b(?!s)", text):
+                rank_year = today.year - 1 if re.search(r"\blast year\b", text) else today.year
+        resolved.update({"category": None, "comparison_target": None, "month": rank_month})
+        facts = analytics.category_ranking(db, user, month=rank_month, year=rank_year,
+                                           limit=limit, kind=kind or "expense")
+        return done("category_ranking",
+                    {"month": rank_month, "year": rank_year, "limit": limit}, facts)
 
     # A spend question about something that is not in the ledger at all.
     # Answering it with a figure (even a zero) is a fabrication, so name it.
@@ -614,13 +645,21 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         # "what about June?" after a listing is the same listing, one month on.
         month_switch = bool(
             isinstance(context, dict)
-            and thread_intent in ("list_transactions", "merchants")
+            and thread_intent in ("list_transactions", "merchants", "category_ranking")
             and month and not mentioned
             and _SWITCH_CUE.search(message)
             and not _SUMMARY_CUES.search(text)
             and not _COMPARE_CUE.search(text)
             and not _WRITE_CUE.search(text)
         )
+        if month_switch and thread_intent == "category_ranking":
+            top = _RANK_LIMIT.search(text)
+            rank_limit = int(top.group(1)) if top else 5
+            facts = analytics.category_ranking(db, user, month=month, limit=rank_limit,
+                                               kind=kind or context.get("kind") or "expense")
+            return done("category_ranking",
+                        {"month": month, "year": None, "limit": rank_limit}, facts)
+
         if month_switch and thread_intent == "list_transactions":
             list_kind = kind or context.get("kind") or "expense"
             found = analytics.search(db, user, category=category, month=month,

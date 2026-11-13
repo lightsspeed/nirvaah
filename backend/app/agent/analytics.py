@@ -292,6 +292,81 @@ def category_by_month(db: Session, user, month: str) -> dict:
     }
 
 
+# ── category ranking ─────────────────────────────────────────────────────────
+
+def category_ranking(db: Session, user, *, month: str | None = None, year: int | None = None,
+                     limit: int = 5, kind: str = "expense") -> dict:
+    """Which categories took the most money in one window — ranked in SQL.
+
+    One GROUP BY returns at most `limit` rows, so the answer never depends on
+    loading a ledger. Case variants of one category are one rank; a missing
+    category is "Other", as everywhere else. `no_data` means the window is
+    empty, never that the user spent nothing.
+    """
+    start = end = None
+    scope = "all time"
+    if month:
+        start, end = month_bounds(month)
+        scope = month
+    elif year is not None:
+        start, end = date(int(year), 1, 1), date(int(year), 12, 31)
+        scope = f"{int(year):04d}"
+    limit = 5 if limit is None else max(1, min(int(limit), 20))
+
+    label = case(
+        (models.Transaction.category.is_(None), "Other"),
+        (models.Transaction.category == "", "Other"),
+        else_=models.Transaction.category,
+    )
+    key = func.lower(label)          # "groceries" and "Groceries" are one rank
+    name = func.min(label)           # ... reported under a real spelling
+    amount = func.sum(models.Transaction.amount)
+    count = func.count(models.Transaction.id)
+
+    overall, rows_total = (
+        _filtered(db, user, start=start, end=end, kind=kind)
+        .with_entities(amount, count)
+        .one()
+    )
+    total = money.to_money(overall, default=money.ZERO)
+    if not int(rows_total or 0):
+        return {"status": "no_data", "scope": scope, "month": month, "year": year,
+                "kind": kind, "limit": limit, "total": 0.0, "count": 0, "categories": [],
+                "top": None, "ranked": 0}
+
+    rows = (
+        _filtered(db, user, start=start, end=end, kind=kind)
+        .with_entities(name, amount, count)
+        .group_by(key)
+        .order_by(amount.desc(), name)
+        .limit(limit)
+        .all()
+    )
+    ranked = []
+    for category, subtotal, subtotal_count in rows:
+        value = money.to_money(subtotal, default=money.ZERO)
+        ranked.append({
+            "category": category,
+            "total": money.number(value),
+            "count": int(subtotal_count or 0),
+            # Share of the window's total, not of the shown top-N.
+            "share_pct": round(float(value / total * 100), 1) if total else None,
+        })
+    return {
+        "status": "ok",
+        "scope": scope,
+        "month": month,
+        "year": year,
+        "kind": kind,
+        "limit": limit,
+        "total": money.number(total),
+        "count": int(rows_total or 0),
+        "categories": ranked,
+        "top": ranked[0] if ranked else None,
+        "ranked": len(ranked),
+    }
+
+
 # ── monthly analytics ────────────────────────────────────────────────────────
 
 def monthly_series(db: Session, user, months: int | None = None, year: int | None = None) -> dict:

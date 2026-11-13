@@ -373,6 +373,8 @@ Rules:
 
 27. Merchant FACTS carry "scope": either the category the query was filtered to, or "all categories". Lead with that scope. An all-category merchant lists its own "categories" — never call the whole total one category, and never present all-category merchants as belonging to the carried category.
 
+29. Category-ranking FACTS carry "scope" (a month like "2026-11", a year like "2026", or "all time"), the window's "total" and "count", and "categories" — the top "limit" ranks, each with its own "total", "count" and "share_pct". These ranks come from the database: answer "which category" with the first entry, name its total, then list the rest in order. Never re-sort, re-add or merge them, never call the window's total one category, and if STATUS is no_data say there is nothing in that period rather than quoting zero.
+
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
 Use "actions": [] when nothing should change.
