@@ -16,6 +16,7 @@ from .. import models
 from ..ai import DELETE_OPS
 from ..timeutil import utcnow
 from . import execution, focus as focus_mod, obs
+from .credentials import credential_kind, refusal as credential_refusal
 from ..database import get_db
 from ..security import get_current_user
 from ..timeutil import iso_utc
@@ -354,6 +355,12 @@ def add_memory(data: MemoryIn, db: Session = Depends(get_db), user=Depends(get_c
     fact = (data.fact or "").strip()
     if not fact:
         raise HTTPException(400, "Nothing to remember.")
+    # Same guard as the assistant path: memories are replayed into prompts.
+    kind = credential_kind(fact)
+    if kind:
+        obs.inc("memory_credential_refused")
+        obs.event("memory_credential_refused", kind=kind)
+        raise HTTPException(400, credential_refusal(kind))
     row = models.MemoryFact(user_id=user.id, fact=fact[:400], source="manual")
     db.add(row)
     db.commit()

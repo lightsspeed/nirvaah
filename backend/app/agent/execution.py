@@ -35,6 +35,7 @@ from decimal import Decimal
 from ..money import ZERO, MoneyError, require_money, to_money
 from ..timeutil import utcnow
 from . import obs
+from .credentials import credential_kind, refusal as credential_refusal
 from . import resolve as resolver
 from .fields import as_plain, date_value, inr, month, num, tags, text
 
@@ -426,6 +427,13 @@ def _remember(db: Session, user, action: dict, *, dry_run: bool, op: str) -> dic
     label = text(action, "fact") or text(action, "text")
     if not label:
         return _result(op, "memory", success=False, error="Nothing to remember.")
+    # A memory is replayed into every later prompt, so a credential must never
+    # reach the database. The value is never echoed or logged (Task 27.6.3.2).
+    kind = credential_kind(label)
+    if kind:
+        obs.inc("memory_credential_refused")
+        obs.event("memory_credential_refused", kind=kind)
+        return _result(op, "memory", success=False, error=credential_refusal(kind))
     if dry_run:
         db.rollback()
         # Nothing was written, so nothing can be verified.
