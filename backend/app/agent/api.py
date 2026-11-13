@@ -234,16 +234,22 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     pending = result.get("pending", [])
     failed = result.get("failed", [])
 
-    # Keep the fact even when the model forgot to emit the remember action.
-    if not any(a.get("op") == "remember" for a in applied + pending):
-        fact = _memory_request(text)
+    # The model sometimes forgets the remember action. Only a message that asks
+    # for a fact to be kept qualifies, and the write goes through the same
+    # verified path as every other memory (Task 27.6.3).
+    if not any(a.get("op") == "remember" for a in applied + pending + failed):
+        from .authority import authorize_memory
+        fact = _memory_request(text) if authorize_memory(text) is None else None
         if fact:
-            row = models.MemoryFact(user_id=user.id, fact=fact, source="conversation")
-            db.add(row)
-            db.commit()
-            applied.append({"op": "remember", "ok": True, "summary": f"Remembered: {fact}"})
-            if not reply or "could not put that into words" in reply:
-                reply = "Noted — I'll remember that."
+            remembered = execution.execute(db, user, {"op": "remember", "fact": fact},
+                                           context={"today": today})
+            if remembered.get("success"):
+                applied.append(remembered)
+                if not reply or "could not put that into words" in reply:
+                    reply = "Noted — I'll remember that."
+            else:
+                failed.append(remembered)
+                reply = remembered.get("error") or reply
 
     uncertain_result = any(r.get("uncertain") for r in applied + pending + failed)
     meta = {

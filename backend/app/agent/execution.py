@@ -428,8 +428,9 @@ def _remember(db: Session, user, action: dict, *, dry_run: bool, op: str) -> dic
         return _result(op, "memory", success=False, error="Nothing to remember.")
     if dry_run:
         db.rollback()
-        return _result(op, "memory", success=True, verified=True,
-                       summary=f"Remembered: {label[:140]}")
+        # Nothing was written, so nothing can be verified.
+        return _result(op, "memory", success=False,
+                       error="Nothing was saved — that was a dry run.")
     db.add(models.MemoryFact(user_id=user.id, fact=label[:400],
                              source=text(action, "source")[:160]))
     outcome = _commit(db, op, "memory")

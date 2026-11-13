@@ -110,3 +110,47 @@ def _refusal(message: str, kind: str) -> str:
     label = LABELS.get(kind, kind)
     return (f'Nothing was saved: "{message.strip()}" does not ask me to add a {label}. '
             f"Tell me to add it if you want it recorded.")
+
+
+# ── memory ─────────────────────────────────────────────────────────────────
+# A memory is a durable fact replayed into every later prompt, so storing one
+# takes an instruction, not a mention. "Do you remember…" is a question about
+# the assistant's memory: it may not create one (Task 27.6.3).
+MEMORY_CUE = re.compile(
+    r"\b(remember|keep in mind|bear in mind|note down|jot down|make a note|"
+    r"don'?t forget|do not forget|from now on|going forward)\b", re.I)
+# Recall, not instruction: addressed to the assistant, or asking what/when.
+RECALL = re.compile(
+    r"\b(?:do|did|can|could|would|will)\s+(?:you|i)\s+remember\b|"
+    r"\bremember\s+(?:how|what|when|where|who|why|which|if|whether)\b|"
+    r"\b(?:what|which|who)\s+should\s+(?:i|you)\s+remember\b", re.I)
+# The instruction has to lead the message, or sit behind a polite frame.
+LEADING_CUE = re.compile(
+    r"^\s*(?:please\s+|ok\s+|okay\s+|and\s+|also\s+|so\s+)*"
+    r"(?:i\s+(?:want|need|would like)\s+you\s+to\s+)?"
+    r"(?:remember|keep in mind|bear in mind|note down|jot down|make a note|"
+    r"don'?t forget|do not forget|from now on|going forward)\b", re.I)
+POLITE_CUE = re.compile(
+    r"^\s*(?:please\s+|hey\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?"
+    r"(?:remember|keep in mind|bear in mind|note down|jot down|make a note)\b", re.I)
+
+NO_MEMORY_INTENT = ("Nothing was saved: that message does not ask me to remember "
+                    "anything, so I did not store it.")
+
+
+def authorize_memory(message: str) -> str | None:
+    """None when the message asks for a fact to be kept, else the refusal to show.
+
+    Reads the message only: the model's fact text is never evidence that the
+    user asked for it to be remembered.
+    """
+    text = normalise(message or "")
+    if not text:
+        return NO_MEMORY_INTENT
+    if RECALL.search(text):
+        return NO_MEMORY_INTENT
+    if not (LEADING_CUE.match(text) or POLITE_CUE.match(text)):
+        return NO_MEMORY_INTENT
+    if QUESTION.match(text) and not POLITE_CUE.match(text):
+        return NO_MEMORY_INTENT
+    return None

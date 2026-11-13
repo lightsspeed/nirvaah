@@ -475,6 +475,9 @@ def guard_action(db: Session, user, action: dict, message: str) -> str | None:
     op = str(action.get("op") or "")
     if not message:
         return None
+    if op == "remember" or op.startswith("remember_"):
+        from .agent.authority import authorize_memory
+        return authorize_memory(message)
     if op.startswith("add_"):
         from .agent.authority import authorize_creation
         return authorize_creation(op, message)
