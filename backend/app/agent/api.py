@@ -250,9 +250,10 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         "note": result.get("note", ""),
     }
     # Filters only: the next request inherits them and re-queries every figure.
+    # A merchant or listing turn may carry only its intent, which is what a later
+    # "what about June?" needs; an empty dict is an explicit reset.
     settled = result.get("chat_context")
-    meta["analytics"] = (settled if isinstance(settled, dict)
-                         and (settled.get("category") or settled.get("month")) else None)
+    meta["analytics"] = settled if isinstance(settled, dict) and settled else None
     assistant = models.ChatMessage(
         conversation_id=conversation_id,
         user_id=user.id,

@@ -228,9 +228,10 @@ def test_the_acceptance_conversation_survives_separate_requests(db, groceries, c
     assert '"transactions": [' in model.last_system
 
     _ask(client, conversation_id, "What about May?")
-    assert "VERIFIED ANALYTICS (intent: category_month)" in model.last_system
+    # The previous answer was a listing, so May is a listing too (Task 27.5.1 F3).
+    assert "VERIFIED ANALYTICS (intent: list_transactions)" in model.last_system
     assert '"month": "2026-05"' in model.last_system
-    assert '"total": 900.0' in model.last_system
+    assert '"count": 3' in model.last_system
 
     _ask(client, conversation_id, "Which merchant contributed most?")
     assert "VERIFIED ANALYTICS (intent: merchants)" in model.last_system
@@ -724,15 +725,17 @@ def comparison_thread(db):
     db.commit()
     db.refresh(user)
     rows = [
-        ("Groceries", "BigBasket", 900, date(2026, 5, 3)),
-        ("Groceries", "More Supermarket", 600, date(2026, 5, 9)),
-        ("Dining Out", "Truffles", 800, date(2026, 5, 12)),
-        ("Fuel", "HP Petrol", 500, date(2026, 5, 5)),
-        ("Groceries", "BigBasket", 700, date(2026, 6, 2)),
-        ("Dining Out", "Truffles", 400, date(2026, 6, 7)),
+        ("expense", "Groceries", "BigBasket", 900, date(2026, 5, 3)),
+        ("expense", "Groceries", "More Supermarket", 600, date(2026, 5, 9)),
+        ("expense", "Dining Out", "Truffles", 800, date(2026, 5, 12)),
+        ("expense", "Fuel", "HP Petrol", 500, date(2026, 5, 5)),
+        ("expense", "Groceries", "BigBasket", 700, date(2026, 6, 2)),
+        ("expense", "Dining Out", "Truffles", 400, date(2026, 6, 7)),
+        ("income", "Salary", "Employer", 90000, date(2026, 5, 1)),
+        ("income", "Salary", "Employer", 88000, date(2026, 6, 1)),
     ]
-    for category, description, amount, when in rows:
-        db.add(models.Transaction(user_id=user.id, kind="expense", amount=Decimal(str(amount)),
+    for kind, category, description, amount, when in rows:
+        db.add(models.Transaction(user_id=user.id, kind=kind, amount=Decimal(str(amount)),
                                   category=category, description=description,
                                   payment_method="UPI", txn_date=when))
     db.commit()
@@ -855,3 +858,207 @@ def test_a_two_month_comparison_still_uses_the_month_comparator(db, comparison_t
     analysis = planner.analyse(db, comparison_thread, "Compare May and June", today=TODAY)
 
     assert analysis["intent"] == "compare_months"
+
+
+# ── I. routing and follow-up hardening (Task 27.5.1) ──────────────────────
+
+def analytics_spy(monkeypatch):
+    """Record every analytics entry point the planner can reach."""
+    from app.agent import analytics
+
+    calls: list[str] = []
+    names = ("search", "merchants", "compare_categories", "category_month", "category_series",
+             "summary", "extremes", "highest_transactions", "monthly_series", "recurring")
+    for name in names:
+        real = getattr(analytics, name)
+
+        def make(real=real, name=name):
+            def spy(*args, **kwargs):
+                calls.append(name)
+                return real(*args, **kwargs)
+            return spy
+
+        monkeypatch.setattr(analytics, name, make())
+    return calls
+
+
+@pytest.mark.parametrize("message", [
+    "Make it a task to pay rent on 20 November.",
+    "Add a task to pay rent tomorrow.",
+    "And delete the last one.",
+])
+def test_a_write_request_runs_no_analytics(db, comparison_thread, monkeypatch, message):
+    calls = analytics_spy(monkeypatch)
+    prior = {"intent": "compare_categories", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": "Dining Out", "turn": 1, "updated_at": "x"}
+
+    analysis = planner.analyse(db, comparison_thread, message, today=TODAY, context=prior, turn=2)
+
+    assert analysis["intent"] is None
+    assert analysis["facts"] is None
+    assert analysis["context"] == prior, "a write request must not rewrite the analytics thread"
+    assert calls == [], f"analytics ran for a write request: {calls}"
+
+
+def test_a_write_request_leaves_a_category_thread_untouched(db, comparison_thread, monkeypatch):
+    calls = analytics_spy(monkeypatch)
+    prior = {"intent": "list_transactions", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 3, "updated_at": "x"}
+
+    analysis = planner.analyse(db, comparison_thread, "Add a task to pay rent on 20 November.",
+                               today=TODAY, context=prior, turn=4)
+
+    assert analysis["context"] == prior
+    assert calls == []
+
+
+def test_add_up_is_still_an_analytics_question(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread, "Add up my grocery spending in May.",
+                               today=TODAY)
+
+    assert analysis["intent"] == "category_month"
+    assert analysis["facts"]["total"] == 1500.0
+
+
+def test_a_mixed_request_keeps_its_analytics(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread,
+                               "Show me my grocery spending and delete the last one.", today=TODAY)
+
+    assert analysis["intent"] == "list_transactions"
+    assert analysis["facts"]["category"] == "Groceries"
+
+
+def test_a_write_turn_in_a_thread_runs_no_analytics(db, comparison_thread, client, scripted,
+                                                    monkeypatch):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much did I spend on groceries in May?")
+
+    before = (db.query(models.ChatMessage)
+              .filter(models.ChatMessage.conversation_id == conversation_id,
+                      models.ChatMessage.role == "assistant")
+              .order_by(models.ChatMessage.id.desc()).first())
+    before_meta = json.loads(before.meta)["analytics"]
+
+    calls = analytics_spy(monkeypatch)
+    model = scripted({"reply": "Added.", "actions": [{"op": "add_task", "text": "Pay rent",
+                                                      "due": "2026-11-20"}]})
+    reply = _ask(client, conversation_id, "Make it a task to pay rent on 20 November.")
+
+    assert reply["applied"], "the write must still go through chat_focus/execution"
+    assert "VERIFIED ANALYTICS (intent:" not in model.last_system
+    after = (db.query(models.ChatMessage)
+             .filter(models.ChatMessage.conversation_id == conversation_id,
+                     models.ChatMessage.role == "assistant")
+             .order_by(models.ChatMessage.id.desc()).first())
+    assert json.loads(after.meta)["analytics"] == before_meta
+    assert calls == []
+
+
+# F2: an unfiltered listing is a new subject.
+
+def test_an_unfiltered_listing_clears_the_comparison_context(db, comparison_thread):
+    compare = planner.analyse(db, comparison_thread,
+                              "Compare Groceries vs Dining Out in May.", today=TODAY)
+    listing = planner.analyse(db, comparison_thread, "Show my transactions.", today=TODAY,
+                              context=compare["context"], turn=2)
+
+    assert listing["intent"] == "list_transactions"
+    assert listing["facts"]["month"] is None and listing["facts"]["category"] is None
+    assert listing["context"] is None, "an unfiltered listing must not keep the old comparison"
+
+    follow = planner.analyse(db, comparison_thread, "Which one was higher?", today=TODAY,
+                             context=listing["context"], turn=3)
+    assert follow["intent"] == "clarify"
+    assert "two categories" in follow["facts"]["question"].lower()
+
+
+def test_a_filtered_listing_keeps_its_context(db, comparison_thread):
+    listing = planner.analyse(db, comparison_thread,
+                              "Show my grocery expenses in May.", today=TODAY)
+
+    assert listing["context"]["category"] == "Groceries"
+    assert listing["context"]["month"] == "2026-05"
+    assert listing["context"]["intent"] == "list_transactions"
+
+
+def test_an_unfiltered_listing_clears_the_context_end_to_end(db, comparison_thread, client,
+                                                             scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "Compare Groceries vs Dining Out in May.")
+    _ask(client, conversation_id, "Show my transactions.")
+
+    row = (db.query(models.ChatMessage)
+           .filter(models.ChatMessage.conversation_id == conversation_id,
+                   models.ChatMessage.role == "assistant")
+           .order_by(models.ChatMessage.id.desc()).first())
+    assert json.loads(row.meta)["analytics"] is None
+
+    _ask(client, conversation_id, "Which one was higher?")
+    assert "VERIFIED ANALYTICS (intent: compare_categories)" not in model.last_system
+
+
+# F3: a month-only follow-up keeps the previous answer shape.
+
+def test_month_follow_up_after_merchants_stays_merchants(db, comparison_thread):
+    first = planner.analyse(db, comparison_thread, "Which merchants did I spend at?", today=TODAY)
+    assert first["context"]["intent"] == "merchants"
+    assert first["context"]["category"] is None and first["context"]["month"] is None
+
+    follow = planner.analyse(db, comparison_thread, "What about June?", today=TODAY,
+                             context=first["context"], turn=2)
+
+    assert follow["intent"] == "merchants"
+    assert follow["facts"]["month"] == "2026-06"
+    assert follow["facts"]["scope"] == "all categories"
+
+
+@pytest.mark.parametrize("message,month", [
+    ("List my income transactions in May.", "2026-06"),
+    ("Show my grocery expenses in May.", "2026-06"),
+])
+def test_month_follow_up_after_a_listing_stays_a_listing(db, comparison_thread, message, month):
+    first = planner.analyse(db, comparison_thread, message, today=TODAY)
+    assert first["intent"] == "list_transactions"
+
+    follow = planner.analyse(db, comparison_thread, "What about June?", today=TODAY,
+                             context=first["context"], turn=2)
+
+    assert follow["intent"] == "list_transactions"
+    assert follow["facts"]["month"] == month
+    assert follow["facts"]["kind"] == first["facts"]["kind"]
+    assert "transactions" in follow["facts"]
+
+
+def test_a_month_follow_up_recomputes_rather_than_reusing_values(db, comparison_thread):
+    first = planner.analyse(db, comparison_thread,
+                            "Show my grocery expenses in May.", today=TODAY)
+    db.add(models.Transaction(user_id=comparison_thread.id, kind="expense", amount=Decimal("250.00"),
+                              category="Groceries", description="June top-up",
+                              payment_method="UPI", txn_date=date(2026, 6, 20)))
+    db.commit()
+
+    follow = planner.analyse(db, comparison_thread, "What about June?", today=TODAY,
+                             context=first["context"], turn=2)
+
+    assert follow["facts"]["total"] == 950.0, "June must be re-queried after new rows exist"
+
+
+def test_intent_only_merchant_context_survives_the_api(db, comparison_thread, client, scripted):
+    scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+
+    _ask(client, conversation_id, "Which merchants did I spend at?")
+    row = (db.query(models.ChatMessage)
+           .filter(models.ChatMessage.conversation_id == conversation_id,
+                   models.ChatMessage.role == "assistant")
+           .order_by(models.ChatMessage.id.desc()).first())
+    stored = json.loads(row.meta)["analytics"]
+    assert stored["intent"] == "merchants"
+    assert stored["category"] is None and stored["month"] is None
+
+    model = scripted({"reply": "ok", "actions": []})
+    _ask(client, conversation_id, "What about June?")
+    assert "VERIFIED ANALYTICS (intent: merchants)" in model.last_system
+    assert '"month": "2026-06"' in model.last_system

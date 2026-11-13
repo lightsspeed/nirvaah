@@ -159,6 +159,51 @@ def _singular(token: str) -> str:
     return token
 
 
+# "make it a task", "and delete the last one" — a change of records, not a
+# question. The lead verb (or an explicit pronoun) plus the absence of any
+# analytics wording is what separates the two; "add up my spending" and
+# "show me my spending and delete it" stay questions.
+_WRITE_LEAD = re.compile(
+    r"^\s*(?:(?:and|then|also|now|please|ok|okay|hey)\s+)*"
+    r"(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
+    r"(?:add|create|update|change|move|reschedule|delete|remove|complete|mark|set|rename|remember|"
+    r"log|make)\b", re.I)
+_WRITE_IDIOM = re.compile(r"\b(?:add|sum|count)\s+up\b|\bbreak\s+down\b", re.I)
+_ANALYTICS_MARKER = re.compile(
+    r"\b(?:compare|comparing|comparison|versus|vs|how much|how many|total|totals|average|avg|"
+    r"list|show|display|which|what|where|breakdown|trend|merchants?)\b", re.I)
+
+
+def _is_write_request(text: str) -> bool:
+    """A request to change records — not a question that merely uses a write verb."""
+    if _WRITE_IDIOM.search(text) or _ANALYTICS_MARKER.search(text):
+        return False
+    if not _WRITE_CUE.search(text):
+        return False
+    return bool(_WRITE_LEAD.search(text) or _DEICTIC.search(text))
+
+
+def _listing_facts(found: dict, category, phrase, month, kind) -> dict:
+    """One shape for every transaction listing, whatever asked for it."""
+    rows = found.get("transactions") or []
+    return {
+        "status": found.get("status"),
+        "month": month,
+        "category": category,
+        "text": phrase,
+        "kind": kind,
+        "count": found.get("count", 0),
+        "total": found.get("total", 0.0),
+        "shown": len(rows),
+        "truncated": len(rows) < int(found.get("count") or 0),
+        "transactions": [
+            {"date": row["date"], "amount": row["amount"], "category": row["category"],
+             "description": row["description"], "payment_method": row["paid_with"]}
+            for row in rows
+        ],
+    }
+
+
 def _listing_phrase(text: str) -> str | None:
     """The noun being listed, when it is not one of the user's categories."""
     match = _LIST_PHRASE_RE.search(text)
@@ -366,7 +411,10 @@ def _next_context(resolved: dict, intent: str | None, prior: dict | None, turn: 
     if intent in ("clarify", "unknown_category"):
         # The question could not be answered, so the thread it came from must survive.
         return prior if isinstance(prior, dict) else None
-    if intent and (resolved.get("category") or resolved.get("month")):
+    # A merchant or listing answer has no filters to remember, but its shape is
+    # what a later "what about June?" needs, so those turns are remembered too.
+    keeps_shape = intent in ("merchants", "list_transactions")
+    if intent and (resolved.get("category") or resolved.get("month") or keeps_shape):
         return {
             "intent": intent,
             "category": resolved.get("category"),
@@ -397,6 +445,10 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         """Attach the filters this turn leaves behind for the next one."""
         return {"intent": intent, "query": query, "facts": facts,
                 "context": _next_context(resolved, intent, context, turn)}
+
+    # A change of records runs no query and leaves the analytics thread alone.
+    if _is_write_request(text):
+        return done(None, {}, None)
 
     # A category the user named but does not have must never become "all
     # categories": ask, and keep the period the thread was already on.
@@ -446,24 +498,12 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         listing_kind = kind or "expense"
         found = analytics.search(db, user, category=category, text=phrase, month=month,
                                  kind=listing_kind, limit=LIST_LIMIT)
-        rows = found.get("transactions") or []
         # Search's own totals stay authoritative; the model only re-states them.
-        facts = {
-            "status": found.get("status"),
-            "month": month,
-            "category": category,
-            "text": phrase,
-            "kind": listing_kind,
-            "count": found.get("count", 0),
-            "total": found.get("total", 0.0),
-            "shown": len(rows),
-            "truncated": len(rows) < int(found.get("count") or 0),
-            "transactions": [
-                {"date": row["date"], "amount": row["amount"], "category": row["category"],
-                 "description": row["description"], "payment_method": row["paid_with"]}
-                for row in rows
-            ],
-        }
+        facts = _listing_facts(found, category, phrase, month, listing_kind)
+        if not category and not month:
+            # "Show my transactions." is a new subject: whatever the thread was
+            # comparing must not stay authoritative for the next follow-up.
+            resolved["reset"] = True
         return done("list_transactions",
                     {"category": category, "text": phrase, "month": month, "kind": listing_kind},
                     facts)
@@ -525,6 +565,24 @@ def analyse(db: Session, user, message: str, today: date | None = None,
                              "question": "Which two categories would you like to compare?"})
         elif sticky_compare:
             return comparison(category or ctx_category, ctx_pair, month or ctx_month, kind)
+
+        # "what about June?" after a listing is the same listing, one month on.
+        month_switch = bool(
+            isinstance(context, dict)
+            and thread_intent in ("list_transactions", "merchants")
+            and month and not mentioned
+            and _SWITCH_CUE.search(message)
+            and not _SUMMARY_CUES.search(text)
+            and not _COMPARE_CUE.search(text)
+            and not _WRITE_CUE.search(text)
+        )
+        if month_switch and thread_intent == "list_transactions":
+            list_kind = kind or context.get("kind") or "expense"
+            found = analytics.search(db, user, category=category, month=month,
+                                     kind=list_kind, limit=LIST_LIMIT)
+            return done("list_transactions",
+                        {"category": category, "text": None, "month": month, "kind": list_kind},
+                        _listing_facts(found, category, None, month, list_kind))
 
         # "which merchant contributed most?" is a question about merchants, even
         # when the category and month were inherited — answer the question asked.
