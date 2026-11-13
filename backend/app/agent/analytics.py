@@ -393,7 +393,8 @@ def merchants(db: Session, user, month: str | None = None, limit: int = 8, *,
                 "status": "unknown_category",
                 "month": month,
                 "category": category,
-                "scope": "all categories",
+                "requested_category": category,
+                "scope": None,
                 "known_categories": categories(db, user),
                 "message": f'You have never used a category called "{category}".',
             }
@@ -425,23 +426,33 @@ def merchants(db: Session, user, month: str | None = None, limit: int = 8, *,
     top = ranked[:limit]
     frequent = sorted(ranked, key=lambda e: -e["count"])[:limit]
 
-    # The category shown for a merchant is the one on its oldest transaction in
-    # the same window — what the row-by-row loop reported, without trusting the
-    # scan order. Only the merchants being returned are looked up.
-    wanted = {e["merchant"].strip().lower() for e in top} | {e["merchant"].strip().lower() for e in frequent}
-    first_category: dict[str, str] = {}
-    if wanted:
-        key = func.lower(func.trim(models.Transaction.description))
-        for merchant_key, row_category in (
-            _filtered(db, user, start=start, end=end, kind=kind or None, categories=matched or None)
-            .filter(key.in_(sorted(wanted)))
-            .with_entities(key, models.Transaction.category)
-            .order_by(models.Transaction.id.asc())
-            .all()
-        ):
-            first_category.setdefault(merchant_key, row_category)
+    if matched:
+        # Filtered to a category, so that category is the merchant's category here.
+        for entry in ranked:
+            entry["category"] = matched_label
+    else:
+        # An all-category total spans categories, so one label would misrepresent
+        # it. Group in SQL (merchants x categories, never rows) and list them.
+        wanted = ({e["merchant"].strip().lower() for e in top}
+                  | {e["merchant"].strip().lower() for e in frequent})
+        per_merchant: dict[str, list[tuple[str, float]]] = {}
+        if wanted:
+            key = func.lower(func.trim(models.Transaction.description))
+            for merchant_key, row_category, subtotal in (
+                _filtered(db, user, start=start, end=end, kind=kind or None)
+                .filter(key.in_(sorted(wanted)))
+                .with_entities(key, models.Transaction.category,
+                               func.sum(models.Transaction.amount))
+                .group_by(key, models.Transaction.category)
+                .all()
+            ):
+                per_merchant.setdefault(merchant_key, []).append(
+                    (row_category or "", float(subtotal or 0)))
+        for entry in ranked:
+            pairs = sorted(per_merchant.get(entry["merchant"].strip().lower(), []),
+                           key=lambda pair: (-pair[1], pair[0]))
+            entry["categories"] = [name for name, _ in pairs if name]
     for entry in ranked:
-        entry["category"] = first_category.get(entry["merchant"].strip().lower())
         entry.pop("_first", None)
 
     return {"status": "ok", "month": month, "category": matched_label, "scope": scope,

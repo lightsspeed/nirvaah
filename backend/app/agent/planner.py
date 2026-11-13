@@ -99,6 +99,24 @@ def _months_back(message: str) -> int | None:
     return None
 
 
+def _requested_category_phrase(message: str) -> str | None:
+    """The category a correction or switch names, if it names one."""
+    match = _CORRECTION_PHRASE.search(message) or _SWITCH_PHRASE.search(message)
+    if not match:
+        return None
+    phrase = match.group("phrase").strip(" .?!,'\"")
+    phrase = _PHRASE_PREFIX.sub("", phrase)
+    phrase = _PHRASE_TAIL.sub("", phrase).strip()
+    if not phrase or re.search(r"\d", phrase):
+        return None
+    if resolve_month(phrase) is not None:
+        # "no, I meant April" is a period, not a category.
+        return None
+    if len(phrase.split()) > 3:
+        return None
+    return phrase
+
+
 def _singular(token: str) -> str:
     """A crude, predictable singular: groceries -> grocery, bills -> bill."""
     if token.endswith("ies") and len(token) > 4:
@@ -153,6 +171,15 @@ _WRITE_CUE = re.compile(
 
 # "what about fuel?", "and April?" — a switch that names one dimension.
 _SWITCH_CUE = re.compile(r"^\s*(?:what|how)\s+about\b|^\s*and\b", re.I)
+# "no, I meant restaurants" / "and my electricity bill?" name a category. When it
+# is not one of the user's, the query must ask rather than widen to everything.
+_CORRECTION_PHRASE = re.compile(
+    r"\b(?:i meant|i mean|meant|instead of|rather than)\s+(?P<phrase>[a-z][a-z &'-]{1,40})", re.I)
+_SWITCH_PHRASE = re.compile(
+    r"^\s*(?:and|what about|how about)\s+(?P<phrase>[a-z][a-z &'-]{1,40})", re.I)
+_PHRASE_PREFIX = re.compile(r"^(?:the|my|our|some|any|all)\s+", re.I)
+_PHRASE_TAIL = re.compile(
+    r"\s+(?:ones?|transactions?|spends?|spending|expenses?|payments?|bill|bills)$", re.I)
 
 # "those", "them", "the same one" — a reference with no words of its own.
 _DEICTIC = re.compile(
@@ -206,6 +233,8 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
     all_cue = bool(_ALL_CUE.search(text))
     writing = bool(_WRITE_CUE.search(text))
     switch = bool(_SWITCH_CUE.search(message))
+    # A write ("and delete it") is never a category request.
+    requested_category = None if writing else _requested_category_phrase(message)
     # A pronoun alone is not an analytics question: "it is done" is about a record.
     # Only ask for clarification when the message is also asking about spending.
     analytics_question = bool(_LIST_NOUN_RE.search(text) or _SUMMARY_CUES.search(text)
@@ -247,6 +276,11 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
             followup = bool(category or month)
             reason = "follow-up on the previous question"
 
+    # A correction or switch keeps the period even when the category it names
+    # is not one the user has: the month is a separate dimension.
+    if isinstance(prior, dict) and (correction or switch) and not month:
+        month = prior.get("month")
+
     if correction and not followup and not (category or month):
         reason = "correction with nothing to correct"
 
@@ -267,6 +301,7 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
         "month": month,
         "kind": kind,
         "comparison_target": comparison_target,
+        "requested_category": requested_category,
         "followup": followup,
         "ambiguous": ambiguous,
         "question": question,
@@ -315,6 +350,21 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         """Attach the filters this turn leaves behind for the next one."""
         return {"intent": intent, "query": query, "facts": facts,
                 "context": _next_context(resolved, intent, context, turn)}
+
+    # A category the user named but does not have must never become "all
+    # categories": ask, and keep the period the thread was already on.
+    requested = resolved.get("requested_category")
+    if requested and not category:
+        matched = analytics.match_categories(db, user, requested)
+        if matched:
+            category = matched[0]
+        else:
+            return done("unknown_category", {"phrase": requested, "month": month},
+                        {"status": "unknown_category", "category": requested,
+                         "requested_category": requested, "scope": None, "month": month,
+                         "known_categories": pool,
+                         "message": (f'You have no category called "{requested}" — I cannot '
+                                     f'answer that without inventing one.')})
 
     # A reference we cannot resolve is a question, not a guess.
     if resolved["ambiguous"]:
@@ -376,10 +426,14 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         # when the category and month were inherited — answer the question asked.
         # A correction or a switch on a merchant thread stays a merchant question.
         thread_intent = context.get("intent") if isinstance(context, dict) else None
+        # "and my electricity bill?" is an amount question, not a merchant one.
+        asks_amount = bool(_SUMMARY_CUES.search(text) or _DIMENSION_Q.search(text)
+                           or _KIND_EXPENSE.search(text))
         asks_merchants = bool(
             re.search(r"\bmerchant|where did i spend|who did i pay|most frequent\b", text)
         ) or (thread_intent == "merchants"
-              and bool(_CORRECTION.search(text) or _SWITCH_CUE.search(message)))
+              and (_CORRECTION.search(text)
+                   or (_SWITCH_CUE.search(message) and not asks_amount)))
         if asks_merchants:
             # The settled category/kind, not the raw message: an inherited or
             # corrected filter must reach the query, and its absence means "all".

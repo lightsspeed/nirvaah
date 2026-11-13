@@ -235,6 +235,31 @@ def test_merchants_unknown_category_is_reported_not_empty(db, merchant_ledger):
     assert facts["status"] == "unknown_category"
     assert "Groceries" in facts["known_categories"]
     assert "merchants" not in facts
+    # An unknown category is not an all-category answer.
+    assert facts["scope"] is None
+    assert facts["requested_category"] == "Yachts"
+
+
+def test_merchants_spanning_categories_are_not_labelled_with_one(db, merchant_ledger):
+    user = merchant_ledger
+    db.add(models.Transaction(user_id=user.id, kind="expense", amount=300.00, category="Groceries",
+                              description="Amazon", payment_method="UPI", txn_date=date(2026, 5, 20)))
+    db.add(models.Transaction(user_id=user.id, kind="expense", amount=700.00, category="Clothes",
+                              description="Amazon", payment_method="UPI", txn_date=date(2026, 5, 21)))
+    db.commit()
+
+    everything = analytics.merchants(db, user, "2026-05")
+    amazon = next(m for m in everything["merchants"] if m["merchant"] == "Amazon")
+
+    assert amazon["total"] == 1000.0
+    assert amazon["categories"] == ["Clothes", "Groceries"]   # by spend, not by age
+    assert "category" not in amazon, "an all-category total is not one category"
+
+    groceries = analytics.merchants(db, user, "2026-05", category="Groceries")
+    filtered = next(m for m in groceries["merchants"] if m["merchant"] == "Amazon")
+    assert filtered["total"] == 300.0
+    assert filtered["category"] == "Groceries"
+    assert "categories" not in filtered
 
 
 def test_merchants_empty_category_month_is_safe(db, merchant_ledger):
@@ -268,7 +293,9 @@ def test_merchants_category_stays_inside_the_user(db, merchant_ledger):
 
 def test_merchants_and_frequency(db, ledger):
     facts = analytics.merchants(db, ledger)
-    assert facts["merchants"] == [{"merchant": "cafe", "total": 350.0, "count": 3, "category": "Food"}]
+    assert facts["merchants"] == [
+        {"merchant": "cafe", "total": 350.0, "count": 3, "categories": ["Food"]},
+    ]
     assert facts["most_frequent"][0]["merchant"] == "cafe"
 
 

@@ -546,12 +546,13 @@ def test_an_unknown_category_keeps_the_previous_context(db, groceries):
 
 @pytest.fixture()
 def merchant_thread(db, user):
-    """May: two grocery merchants, one restaurant, one fuel; April groceries."""
+    """May: two grocery merchants, one restaurant, one fuel, one power bill."""
     rows = [
         ("Groceries", "BigBasket", 900, date(2026, 5, 3)),
         ("Groceries", "More Supermarket", 600, date(2026, 5, 9)),
         ("Restaurants", "Truffles", 1200, date(2026, 5, 12)),
         ("Fuel", "HP Petrol", 1500, date(2026, 5, 5)),
+        ("Electricity", "BESCOM", 1200, date(2026, 5, 11)),
         ("Groceries", "BigBasket", 700, date(2026, 4, 20)),
     ]
     for category, description, amount, when in rows:
@@ -620,3 +621,94 @@ def test_merchant_correction_replaces_the_category_and_keeps_the_month(db, merch
     assert analysis["facts"]["scope"] == "Restaurants"
     assert analysis["facts"]["month"] == "2026-05"
     assert [m["merchant"] for m in analysis["facts"]["merchants"]] == ["Truffles"]
+
+
+# ── G. unknown categories never widen the query (Task 27.3.1) ─────────────
+
+def merchant_spy(monkeypatch):
+    """Record what analytics.merchants() is called with."""
+    from app.agent import analytics
+
+    calls: list = []
+    real = analytics.merchants
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("category"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(analytics, "merchants", spy)
+    return calls
+
+
+def test_an_unknown_category_correction_asks_and_never_queries(db, merchant_thread, monkeypatch):
+    calls = merchant_spy(monkeypatch)
+    prior = {"intent": "merchants", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 2, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread, "No, I meant boutiques.", today=TODAY,
+                               context=prior, turn=3)
+
+    assert analysis["intent"] == "unknown_category"
+    facts = analysis["facts"]
+    assert facts["status"] == "unknown_category"
+    assert facts["category"] == "boutiques"
+    assert facts["scope"] is None
+    assert facts["month"] == "2026-05", "the period must survive an unknown category"
+    assert "merchants" not in facts
+    assert "Groceries" in facts["known_categories"]
+    assert calls == [], "no merchant query may run for an unresolved category"
+
+
+def test_an_unknown_category_switch_asks_instead_of_widening(db, merchant_thread, monkeypatch):
+    calls = merchant_spy(monkeypatch)
+    prior = {"intent": "merchants", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 2, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread, "and my school fees bill?", today=TODAY,
+                               context=prior, turn=3)
+
+    assert analysis["intent"] == "unknown_category"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert calls == []
+
+
+def test_a_recognised_correction_still_queries_the_new_category(db, merchant_thread, monkeypatch):
+    calls = merchant_spy(monkeypatch)
+    prior = {"intent": "merchants", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 2, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread, "No, I meant dining out.", today=TODAY,
+                               context=prior, turn=3)
+
+    assert analysis["facts"]["scope"] == "Dining Out"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert calls == ["Dining Out"]
+
+
+def test_a_bill_question_is_not_hijacked_by_the_merchant_thread(db, merchant_thread, monkeypatch):
+    calls = merchant_spy(monkeypatch)
+    prior = {"intent": "merchants", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 2, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread, "and my electricity bill?", today=TODAY,
+                               context=prior, turn=3)
+
+    assert analysis["intent"] == "category_month"
+    assert analysis["facts"]["categories"] == ["Electricity"]
+    assert analysis["facts"]["month"] == "2026-05"
+    assert calls == [], "a bill question is not a merchant question"
+
+
+def test_an_explicit_merchant_question_still_uses_merchants(db, merchant_thread, monkeypatch):
+    calls = merchant_spy(monkeypatch)
+    prior = {"intent": "merchants", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 2, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread,
+                               "and which merchant contributed most for electricity?",
+                               today=TODAY, context=prior, turn=3)
+
+    assert analysis["intent"] == "merchants"
+    assert analysis["facts"]["scope"] == "Electricity"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert calls == ["Electricity"]
