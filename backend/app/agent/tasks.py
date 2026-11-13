@@ -565,3 +565,138 @@ def task_progress(db: Session, user, *, period: str = "month", today: date | Non
                     f"{completed_in_period} completed in {window['period']}, "
                     f"{pending} still pending ({overdue} overdue)."),
     }
+
+
+# ── weekly review ───────────────────────────────────────────────────────────
+
+WEEKLY_LIMIT = 10
+
+
+def _later_tasks(db: Session, user, today: date, days: int, limit: int):
+    """Open work that is not due in the near window and is not overdue.
+
+    This is the tail of the pending list: the part that no other section shows,
+    so the review never lists the same task twice.
+    """
+    horizon = today + timedelta(days=days)
+    query = _open(db, user).filter(or_(models.Task.due.is_(None), models.Task.due > horizon))
+    count = query.with_entities(func.count(models.Task.id)).scalar() or 0
+    weight = case(
+        (func.lower(models.Task.priority) == "high", 0),
+        (func.lower(models.Task.priority) == "medium", 1),
+        (func.lower(models.Task.priority) == "low", 2),
+        else_=3,
+    )
+    undated_last = case((models.Task.due.is_(None), 1), else_=0)
+    rows = (query.order_by(weight.asc(), undated_last.asc(), models.Task.due.asc(),
+                           models.Task.created_at.asc(), models.Task.id.asc())
+            .limit(limit).all())
+    return int(count), [_task_row(row) for row in rows]
+
+
+def weekly_review(db: Session, user, *, today: date | None = None,
+                  timezone_name: str | None = None, limit: int = WEEKLY_LIMIT) -> dict:
+    """One review of the current Monday–Sunday week, composed from the parts.
+
+    Nothing is recalculated here: this week's completions come from
+    completed_tasks, the counts from task_progress, overdue and upcoming from
+    due_tasks, and attention from attention_tasks. The sections describe
+    different scopes — this week's completions, everything still open, what is
+    late, what is due soon — so no figure is subtracted from another and no rate
+    is implied.
+    """
+    today = today or date.today()
+    limit = WEEKLY_LIMIT if limit is None else max(1, min(int(limit), MAX_LIMIT))
+    week_start = today - timedelta(days=today.weekday())
+    week_finish = week_end(today)
+
+    completed = completed_tasks(db, user, period="week", today=today,
+                                timezone_name=timezone_name, limit=limit)
+    progress = task_progress(db, user, period="week", today=today, timezone_name=timezone_name)
+    overdue = due_tasks(db, user, window="overdue", today=today, limit=limit)
+    upcoming = due_tasks(db, user, window="upcoming", days=DEFAULT_HORIZON, today=today,
+                         limit=limit)
+    attention = attention_tasks(db, user, today=today, limit=limit)
+    later_count, later_rows = _later_tasks(db, user, today, DEFAULT_HORIZON, limit)
+
+    # A task may legitimately appear in more than one section; say where, so the
+    # reply can mention it once instead of three times.
+    seen_in: dict[str, list[str]] = {}
+    for section, rows in (("overdue", overdue["tasks"]), ("upcoming", upcoming["tasks"]),
+                          ("pending", later_rows)):
+        for row in rows:
+            seen_in.setdefault(row["id"], []).append(section)
+
+    attention_tasks_out = []
+    for row in attention["tasks"]:
+        entry = dict(row)
+        elsewhere = [name for name in seen_in.get(row["id"], []) if name != "attention"]
+        if elsewhere:
+            entry["also_listed_in"] = elsewhere
+        attention_tasks_out.append(entry)
+
+    facts = {
+        "status": "ok" if progress["total_count"] else "no_data",
+        "week_start": week_start.isoformat(),
+        "week_end": week_finish.isoformat(),
+        "today": today.isoformat(),
+        "timezone": timezone_name or "UTC",
+        "limit": limit,
+        "completed_count": progress["completed_count"],
+        "pending_count": progress["pending_count"],
+        "overdue_count": progress["overdue_count"],
+        "attention_count": attention["count"],
+        "upcoming_count": upcoming["count"],
+        "without_timestamp": progress["without_timestamp"],
+        "sections": {
+            "completed": {
+                "scope": f"completed between {week_start.isoformat()} and "
+                         f"{week_finish.isoformat()}",
+                "count": completed["count"],
+                "shown": completed["shown"],
+                "truncated": completed["truncated"],
+                "tasks": completed["tasks"],
+            },
+            "pending": {
+                "scope": "open tasks not overdue and not due in the next seven days",
+                "count": later_count,
+                "shown": len(later_rows),
+                "truncated": len(later_rows) < later_count,
+                "tasks": later_rows,
+            },
+            "overdue": {
+                "scope": "open tasks whose due date has passed",
+                "count": overdue["count"],
+                "shown": overdue["shown"],
+                "truncated": overdue["truncated"],
+                "tasks": overdue["tasks"],
+            },
+            "attention": {
+                "scope": "open tasks ranked by why they need attention",
+                "count": attention["count"],
+                "shown": len(attention_tasks_out),
+                "truncated": len(attention_tasks_out) < attention["count"],
+                "tasks": attention_tasks_out,
+            },
+            "upcoming": {
+                "scope": f"open tasks due {upcoming['start']} to {upcoming['end']}",
+                "start": upcoming["start"],
+                "end": upcoming["end"],
+                "count": upcoming["count"],
+                "shown": upcoming["shown"],
+                "truncated": upcoming["truncated"],
+                "tasks": upcoming["tasks"],
+            },
+        },
+        "scope": {
+            "completed_count": "completed this week (Monday to Sunday, local dates)",
+            "pending_count": "every task still open, any due date",
+            "overdue_count": "open tasks past their due date",
+            "attention_count": "open tasks with at least one attention reason",
+            "upcoming_count": "open tasks due in the next seven days",
+            "pending_section": "only the open tasks no other section lists",
+        },
+    }
+    if not progress["total_count"]:
+        facts["message"] = "No tasks recorded yet."
+    return facts

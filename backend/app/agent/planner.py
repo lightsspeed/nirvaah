@@ -357,6 +357,18 @@ _COMPLETED_CUE = re.compile(
     r"|\bhow\s+many\s+tasks?\s+(?:did\s+i\s+|have\s+i\s+)?(?:complete|finish|close)\w*\b"
     r"|\bcompletion\s+history\b",
     re.I)
+# "Give me my weekly review", "how was my week?", "what should I focus on next
+# week?" — one review of the current Monday–Sunday week (Task 29.4).
+_WEEKLY_CUE = re.compile(
+    r"\bweekly\s+review\b|\bweek\s+in\s+review\b|\breview\s+my\s+week\b"
+    r"|\bhow\s+(?:was|did)\s+my\s+week\b"
+    r"|\bsummari[sz]e\s+my\s+(?:week|task\s+progress\s+this\s+week)\b"
+    r"|\bmy\s+week\s+summary\b|\bweek(?:ly)?\s+summary\b"
+    r"|\btask\s+progress\s+this\s+week\b"
+    r"|\bwhat\s+did\s+i\s+(?:finish|complete|do)\s+and\s+what(?:\s+is|'s)\s+still\s+pending\b"
+    r"|\bwhat\s+should\s+i\s+(?:focus\s+on|work\s+on|prioriti[sz]e|do)\s+(?:for\s+)?next\s+week\b"
+    r"|\bhow\s+am\s+i\s+doing\s+this\s+week\b",
+    re.I)
 # "How am I doing with my tasks?", "how many are still pending?", "compare my
 # completed and pending tasks" — progress, which mixes a period with right now.
 _PROGRESS_CUE = re.compile(
@@ -579,6 +591,16 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     # A change of records runs no query and leaves the analytics thread alone.
     if _is_write_request(text):
         return done(None, {}, None)
+
+    # A weekly review is a composition of the other task answers, so it is
+    # checked before them: "what did I finish and what is still pending?" is a
+    # review, not a history lookup, and it runs no analytics and no writes.
+    if _WEEKLY_CUE.search(text):
+        facts = task_intel.weekly_review(db, user, today=today, timezone_name=timezone_name)
+        result = done("tasks_weekly_review",
+                      {"week_start": facts["week_start"], "week_end": facts["week_end"]}, facts)
+        result["context"] = context if isinstance(context, dict) else None
+        return result
 
     # Completion history and progress come before the open-task intents: "what
     # did I complete today?" is about finished work, not what is due, and the
