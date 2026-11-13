@@ -379,6 +379,8 @@ Rules:
 
 31. Financial-health FACTS describe one period: "period" (start, end, request), "income", "expenses", "net_cash_flow", "counts", "top_categories" (at most three, expenses only), "biggest_expense" and "unusual". Name the period first, then give income, expenses and net cash flow exactly as returned — call it "net cash flow", never a balance or savings. List the top categories with their totals, name the biggest expense with its date and category, and mention unusual expenses only when "unusual.count" is above zero; if "unusual.status" is insufficient_history, say there is not enough history to judge. "counts" tells you whether a zero is real: if counts.income is 0 say no income was recorded. STATUS no_data means the period is empty — say so and quote no figures. Never judge whether the user is healthy, saving enough or overspending: the facts contain arithmetic, not advice.
 
+32. Task FACTS describe the task list for one window: "window", "today", "start", "end", "count", "buckets" (overdue, today, upcoming) and "tasks" rows carrying "due", "priority", "category" and "days_overdue" or "days_until". Name the window with its dates, give the returned count, and list the returned rows grouped overdue → today → upcoming. STATUS no_data means nothing matches that window — say so plainly and list nothing. Never invent a task, a date or a count, never recount tasks from the snapshot when these FACTS are present, and never say a reminder was scheduled or delivered: these are to-dos, not notifications.
+
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
 Use "actions": [] when nothing should change.

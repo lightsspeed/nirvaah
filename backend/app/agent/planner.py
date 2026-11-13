@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..timeutil import iso_utc, utcnow
 from . import analytics
+from . import tasks as task_intel
 from . import obs
 from .resolve import normalise
 
@@ -319,6 +320,23 @@ _RANK_CUE = re.compile(
     r"|\brank\b[^?]{0,30}\b(?:expenses?|categor(?:y|ies))\b",
     re.I)
 _RANK_LIMIT = re.compile(r"\btop\s+(\d{1,2})\b", re.I)
+# "What do I need to complete today?", "show me overdue tasks", "what's on my
+# plate?" — questions about the task list, answered from SQL (Task 29.1).
+_TASKS_CUE = re.compile(
+    r"\boverdue\b|\bpast\s+due\b"
+    r"|\btasks?\b[^?]{0,40}\b(?:due|overdue|today|tomorrow|this\s+week|next\s+week)\b"
+    r"|\b(?:due|overdue)\b[^?]{0,30}\btasks?\b"
+    r"|\bwhat(?:'s|s|\s+is)?\s+(?:due|coming\s+up|on\s+my\s+plate)\b"
+    r"|\bwhat\s+do\s+i\s+(?:need|have)\s+to\s+(?:do|complete|finish)\b"
+    r"|\bwhat\s+should\s+i\s+(?:do|work\s+on|focus\s+on|tackle)\b"
+    r"|\b(?:show|list|see|any)\b[^?]{0,30}\btasks?\b"
+    r"|\bon\s+my\s+plate\b"
+    r"|\bwhat'?s\s+(?:left|pending)\b"
+    r"|\bcoming\s+up\b",
+    re.I)
+# "What's due on my credit card?" is a bill question, not a task question.
+_MONEY_NOUN = re.compile(r"\b(?:bill|bills|card|payment|emi|invoice|rent|fee|amount|balance)\b",
+                         re.I)
 # "Give me my financial health summary", "how am I doing financially",
 # "summarise my finances for October", "financial overview" — one period, many
 # components, so this intent outranks the individual analytics (Task 28.5).
@@ -527,6 +545,26 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     # A change of records runs no query and leaves the analytics thread alone.
     if _is_write_request(text):
         return done(None, {}, None)
+
+    # A task question is answered from SQL, before any finance intent, and a
+    # finance category carried by the thread never narrows it. The write guard
+    # above has already removed real change requests ("complete the AWS task"),
+    # so "what do I need to complete today?" reaches here as a question.
+    if _TASKS_CUE.search(text) \
+            and (re.search(r"\btasks?\b", text) or not _MONEY_NOUN.search(text)):
+        window = task_intel.window_for(message, today)
+        if window.get("ambiguous"):
+            return done("clarify", {"question": window["question"]},
+                        {"status": "ambiguous", "question": window["question"],
+                         "message": window["question"]})
+        when = date.fromisoformat(window["date"]) if window["date"] else None
+        facts = task_intel.due_tasks(db, user, window=window["window"], today=today,
+                                     days=window["days"], on=when)
+        result = done("tasks_due",
+                      {"window": window["window"], "start": window["start"],
+                       "end": window["end"]}, facts)
+        result["context"] = context if isinstance(context, dict) else None
+        return result
 
     # An overall summary is one period with several parts. It outranks the
     # single-question intents, and it never inherits a category or merchant
