@@ -45,6 +45,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app app ./app
+COPY --chown=app:app migrations ./migrations
 
 USER app
 

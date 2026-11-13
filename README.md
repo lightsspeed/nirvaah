@@ -125,6 +125,22 @@ a bare local build records `unknown` rather than a guess. The labels also cover
 Nothing here deploys anything: `up` and `build` are local Docker only. Publishing
 is `release.sh`, which tags and pushes to the registry and stops there.
 
+## Schema migrations
+
+`create_all()` at startup only creates **missing tables** — it never adds an index
+to a table that already exists. Schema changes therefore ship as numbered SQL files
+in [`backend/migrations`](backend/migrations) and are applied deliberately:
+
+```bash
+docker compose run --rm backend python -m app.migrate
+```
+
+Each run applies every pending file in one transaction and records it in
+`schema_migrations`; a second run is a no-op. On PostgreSQL a failure rolls the
+batch back and an advisory lock stops two runners from racing. Nothing is applied
+at container start, so a deploy never issues DDL against a live database, and a
+freshly created database needs this command once.
+
 ## Assistant reliability layer
 
 The assistant is structured so that nothing it says can get ahead of the

@@ -55,6 +55,35 @@ def login(data: schemas.LoginIn, db: Session = Depends(get_db)):
 def me(user=Depends(get_current_user)):
     return {"id": user.id, "name": user.name, "email": user.email, "currency": user.currency}
 
+def month_bounds(month: str | None) -> tuple[date, date] | None:
+    """First day of ``month`` (YYYY-MM) and the first day of the month after it.
+
+    Month filters use ``txn_date >= start AND txn_date < end`` so PostgreSQL can
+    use the (user_id, txn_date) index. ``to_char(txn_date, 'YYYY-MM') = month``
+    wrapped the column in a function and forced a scan of every row.
+
+    Returns None for anything that is not a plain YYYY-MM month, which keeps the
+    old "matches nothing" behaviour for a malformed value.
+    """
+    if not month or len(month) != 7 or month[4] != "-":
+        return None
+    try:
+        year, mon = int(month[:4]), int(month[5:])
+        start = date(year, mon, 1)
+    except ValueError:
+        return None
+    return start, date(year + (mon == 12), mon % 12 + 1, 1)
+
+
+def month_conditions(month: str | None) -> tuple:
+    """Filter conditions for one month: inclusive start, exclusive next month."""
+    bounds = month_bounds(month)
+    if bounds is None:
+        return (models.Transaction.id.is_(None),)
+    start, end = bounds
+    return (models.Transaction.txn_date >= start, models.Transaction.txn_date < end)
+
+
 def parse_date_param(d_str: str | None) -> date | None:
     if not d_str:
         return None
@@ -84,19 +113,13 @@ def dashboard(
         period_label = "All Time"
         budget_month = today.strftime("%Y-%m")
     elif month:
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == month)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == month)
+        q = q.filter(*month_conditions(month))
         period_label = month
         budget_month = month
     else:
         # Default: current month stats
         cur_m = today.strftime("%Y-%m")
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == cur_m)
+        q = q.filter(*month_conditions(cur_m))
         period_label = cur_m
         budget_month = cur_m
 
@@ -157,17 +180,10 @@ def list_transactions(
     elif month and month.lower() == "all":
         pass  # All time
     elif month:
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == month)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == month)
+        q = q.filter(*month_conditions(month))
     else:
         # Default: current month
-        cur_m = today.strftime("%Y-%m")
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == cur_m)
+        q = q.filter(*month_conditions(today.strftime("%Y-%m")))
     
     if kind and kind.lower() in ("income", "expense"):
         q = q.filter(models.Transaction.kind == kind.lower())
@@ -328,15 +344,16 @@ def analytics(
     elif from_month and from_month.lower() != "all":
         if not to_month:
             to_month = from_month
-        if engine.dialect.name == "sqlite":
-            q = q.filter(
-                func.strftime("%Y-%m", models.Transaction.txn_date) >= from_month,
-                func.strftime("%Y-%m", models.Transaction.txn_date) <= to_month,
-            )
+        start_bounds = month_bounds(from_month)
+        end_bounds = month_bounds(to_month)
+        if start_bounds is None or end_bounds is None:
+            q = q.filter(models.Transaction.id.is_(None))
         else:
+            # Whole months: from the 1st of `from` up to (not including) the 1st
+            # of the month after `to`.
             q = q.filter(
-                func.to_char(models.Transaction.txn_date, "YYYY-MM") >= from_month,
-                func.to_char(models.Transaction.txn_date, "YYYY-MM") <= to_month,
+                models.Transaction.txn_date >= start_bounds[0],
+                models.Transaction.txn_date < end_bounds[1],
             )
         from_label = from_month
         to_label = to_month
@@ -346,10 +363,7 @@ def analytics(
     else:
         # Default: current month
         cur_m = today.strftime("%Y-%m")
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == cur_m)
+        q = q.filter(*month_conditions(cur_m))
         from_label = cur_m
         to_label = cur_m
 
