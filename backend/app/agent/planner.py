@@ -47,7 +47,8 @@ _LIST_NOUN_RE = re.compile(r"\b" + _LIST_NOUN + r"\b", re.I)
 _LIST_PHRASE_RE = re.compile(r"\b([a-z][a-z'&-]{2,})\s+" + _LIST_NOUN + r"\b", re.I)
 _STOPWORDS = {
     "all", "any", "my", "our", "the", "these", "those", "this", "that", "last", "next",
-    "recent", "every", "each", "of", "and", "down", "me", "give", "show", "list", "display",
+    "recent", "latest", "newest", "oldest", "first", "every", "each", "of", "and", "down",
+    "me", "give", "show", "list", "display",
     "monthly", "total", "income", "expense", "expenses", "spend", "spends", "spending",
 }
 LIST_LIMIT = 40
@@ -169,6 +170,15 @@ _WRITE_LEAD = re.compile(
     r"(?:add|create|update|change|move|reschedule|delete|remove|complete|mark|set|rename|remember|"
     r"log|make)\b", re.I)
 _WRITE_IDIOM = re.compile(r"\b(?:add|sum|count)\s+up\b|\bbreak\s+down\b", re.I)
+# "I spent ₹1,500 on groceries today." — in a bookkeeping assistant a first-person
+# report of money moving *is* the write. It needs a subject, a money verb and an
+# amount: "I spent too much last month" is a remark, not a record (Task 28.2).
+_MONEY_REPORT = re.compile(
+    r"^\s*(?:please\s+|ok\s+|okay\s+|so\s+|and\s+|also\s+)*"
+    r"(?:i|we)\s+(?:(?:just|also|recently|already|have|had|finally)\s+)*"
+    r"(?:spent|paid|bought|purchased|earned|received|got\s+paid|sold|withdrew|deposited|made)\b"
+    r"[^0-9]{0,40}\d",
+    re.I)
 _ANALYTICS_MARKER = re.compile(
     r"\b(?:compare|comparing|comparison|versus|vs|how much|how many|total|totals|average|avg|"
     r"list|show|display|which|what|where|breakdown|trend|merchants?)\b", re.I)
@@ -178,6 +188,9 @@ def _is_write_request(text: str) -> bool:
     """A request to change records — not a question that merely uses a write verb."""
     if _WRITE_IDIOM.search(text) or _ANALYTICS_MARKER.search(text):
         return False
+    # A reported transaction is the write itself: no analytics, no new context.
+    if _MONEY_REPORT.search(text):
+        return True
     if not _WRITE_CUE.search(text):
         return False
     return bool(_WRITE_LEAD.search(text) or _DEICTIC.search(text))
