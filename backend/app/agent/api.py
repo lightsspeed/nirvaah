@@ -245,6 +245,7 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
             if not reply or "could not put that into words" in reply:
                 reply = "Noted — I'll remember that."
 
+    uncertain_result = any(r.get("uncertain") for r in applied + pending + failed)
     meta = {
         "applied": applied,
         "pending": pending,
@@ -255,7 +256,7 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         "note": result.get("note", ""),
         "graph_error": result.get("graph_error", ""),
         "partial": bool(result.get("partial")),
-        "uncertain": bool(result.get("uncertain")),
+        "uncertain": bool(result.get("uncertain")) or uncertain_result,
     }
     # Filters only: the next request inherits them and re-queries every figure.
     # A merchant or listing turn may carry only its intent, which is what a later

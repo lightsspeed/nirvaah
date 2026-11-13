@@ -401,8 +401,12 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         analysis = state.get("analytics") or {}
         facts = analysis.get("facts")
 
+        # A write we could not confirm is never described as a definite failure.
+        uncertain = [r for r in failed if r.get("uncertain")]
         if isinstance(facts, dict) and facts.get("status") == "ambiguous":
             reply = facts.get("question") or "Which transactions do you mean?"
+        elif uncertain and not applied and not pending:
+            reply = uncertain[0].get("error") or UNCERTAIN_NOTE
         elif failed and not applied and not pending:
             # The execution layer's own words: "did not persist", "3 tasks match …"
             reply = failed[0].get("error") or "I could not do that — nothing was changed."
@@ -430,6 +434,8 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                 reply = facts.get("message") or (
                     "I could not see any transactions for that range, so I cannot give a figure — "
                     "that is missing data, not zero.")
+        if uncertain and (applied or pending):
+            reply = (reply + " " + UNCERTAIN_NOTE).strip()
         reply = normalize_currency(clean_reply(reply, pending, applied))
 
         # Memories just written must be visible next turn, so re-read them.
@@ -466,6 +472,8 @@ _RECOVERY_UNCHANGED = (
     "I hit a problem while handling that and stopped before changing anything. "
     "Nothing was saved — please ask again."
 )
+UNCERTAIN_NOTE = ("One change could not be confirmed — please check it before repeating "
+                 "it.")
 _RECOVERY_UNCERTAIN = (
     "I could not confirm whether that change was saved, so I stopped and did not retry it — "
     "please check the record before trying again."

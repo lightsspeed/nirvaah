@@ -13,6 +13,7 @@ The result shape is the contract the graph and the API speak:
       "entity_id": "...",
       "changes": {"due": {"before": "2026-11-15", "after": "2026-11-21"}},
       "verified": bool,
+      "uncertain": bool,     # the commit landed or not — we could not tell
       "error": None | str,
       # legacy keys the UI already renders
       "ok": bool, "op": "...", "summary": "...", "pending": bool
@@ -25,7 +26,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import DataError, IntegrityError, NotSupportedError, ProgrammingError
+from sqlalchemy.orm import Session, sessionmaker
 
 from .. import models
 from decimal import Decimal
@@ -277,10 +279,12 @@ FIELD_BUILDERS = {
 
 def _result(op: str, kind: str, *, success: bool, verified: bool = False,
             entity_id=None, changes: dict | None = None, error: str | None = None,
-            summary: str = "", pending: bool = False) -> dict:
+            summary: str = "", pending: bool = False, uncertain: bool = False) -> dict:
     return {
         "success": success,
         "verified": verified,
+        # A write that may or may not have committed is neither success nor failure.
+        "uncertain": uncertain,
         "operation": op,
         "op": op,
         "entity_type": kind,
@@ -314,15 +318,94 @@ def _read_back(db: Session, model, pk):
     return db.get(model, pk)
 
 
-def _commit(db: Session, op: str, kind: str) -> str | None:
+# The database answered and rejected the transaction: the rollback is certain.
+REJECTIONS = (IntegrityError, DataError, ProgrammingError, NotSupportedError)
+
+UNCERTAIN = ("I could not confirm whether that change was saved — the connection dropped "
+             "while it was being written. Please check the record before trying again.")
+
+
+@dataclass(frozen=True)
+class CommitOutcome:
+    """The three states a commit can end in.
+
+    ``ok``          committed and acknowledged.
+    ``definite``    the database rejected it; nothing was saved.
+    neither         the acknowledgement was lost; the row may exist.
+    """
+
+    ok: bool
+    definite: bool = True
+    error: str | None = None
+
+
+def _safe_rollback(db: Session) -> None:
+    """A dead connection cannot roll back; that must not mask the original error."""
+    try:
+        db.rollback()
+    except Exception:  # noqa: BLE001
+        obs.inc("rollback_failed")
+
+
+def _probe_row(db: Session, model, pk):
+    """Read the row over a fresh connection: (row, probe_ran).
+
+    The session that lost the commit acknowledgement may be unusable, so the
+    probe never reuses it. ``probe_ran`` is False when even the read failed —
+    which proves nothing about the write.
+    """
+    try:
+        probe = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)()
+    except Exception as exc:  # noqa: BLE001
+        obs.event("probe_failed", error=str(exc)[:160])
+        return None, False
+    try:
+        return probe.get(model, pk), True
+    except Exception as exc:  # noqa: BLE001 - the connection may still be gone
+        obs.event("probe_failed", error=str(exc)[:160])
+        return None, False
+    finally:
+        try:
+            probe.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _memory_persisted(db: Session, user, fact: str) -> bool:
+    """Did this fact land? Same fresh-connection rule as _probe_row."""
+    try:
+        probe = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)()
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        return (probe.query(models.MemoryFact)
+                .filter(models.MemoryFact.user_id == user.id, models.MemoryFact.fact == fact)
+                .first() is not None)
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            probe.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _commit(db: Session, op: str, kind: str) -> CommitOutcome:
     try:
         db.commit()
-    except Exception as exc:  # noqa: BLE001 - any driver error is a failed write
-        db.rollback()
+        return CommitOutcome(True)
+    except REJECTIONS as exc:
+        _safe_rollback(db)
         obs.inc("commit_failed")
-        obs.event("commit_failed", operation=op, entity_type=kind, error=str(exc)[:200])
-        return "The database refused the change — nothing was saved."
-    return None
+        obs.event("commit_failed", operation=op, entity_type=kind, error=str(exc)[:200],
+                  definite=True)
+        return CommitOutcome(False, True,
+                             "The database refused the change — nothing was saved.")
+    except Exception as exc:  # noqa: BLE001 - connection loss: the outcome is unknown
+        _safe_rollback(db)
+        obs.inc("commit_uncertain")
+        obs.event("commit_uncertain", operation=op, entity_type=kind, error=str(exc)[:200])
+        return CommitOutcome(False, False, UNCERTAIN)
 
 
 def _summarise(kind: str, verb: str, row) -> str:
@@ -338,8 +421,35 @@ def _summarise(kind: str, verb: str, row) -> str:
 
 # ── the executor ─────────────────────────────────────────────────────────────
 
+def _remember(db: Session, user, action: dict, *, dry_run: bool, op: str) -> dict:
+    """A memory fact, with the same commit-ambiguity rules as any other write."""
+    label = text(action, "fact") or text(action, "text")
+    if not label:
+        return _result(op, "memory", success=False, error="Nothing to remember.")
+    if dry_run:
+        db.rollback()
+        return _result(op, "memory", success=True, verified=True,
+                       summary=f"Remembered: {label[:140]}")
+    db.add(models.MemoryFact(user_id=user.id, fact=label[:400],
+                             source=text(action, "source")[:160]))
+    outcome = _commit(db, op, "memory")
+    if not outcome.ok and outcome.definite:
+        return _result(op, "memory", success=False, error=outcome.error)
+    if not outcome.ok and not _memory_persisted(db, user, label[:400]):
+        obs.inc("commit_unconfirmed")
+        return _result(op, "memory", success=False, uncertain=True, error=UNCERTAIN)
+    return _result(op, "memory", success=True, verified=True,
+                   summary=f"Remembered: {label[:140]}")
+
+
 def execute(db: Session, user, action: dict, dry_run: bool = False, context: dict | None = None) -> dict:
     op = str(action.get("op") or "").strip()
+    # The prompt documents {"op": "remember"} (rule 17); it names no entity kind,
+    # so it is handled before the kind lookup rather than falling through it.
+    if op == "remember":
+        return _remember(db, user, action, dry_run=dry_run, op=op)
+    if op.startswith("remember_"):
+        return _remember(db, user, action, dry_run=dry_run, op=op)
     parts = op.split("_", 1)
     if len(parts) != 2:
         return _result(op, "unknown", success=False, error=f"I do not know how to {op or 'do that'}.")
@@ -348,19 +458,6 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     spec = SPECS.get(kind)
     if spec is None:
         return _result(op, kind, success=False, error=f"{kind} records are not something I can change.")
-
-    if verb == "remember":
-        label = text(action, "fact") or text(action, "text")
-        if not label:
-            return _result(op, "memory", success=False, error="Nothing to remember.")
-        if dry_run:
-            db.rollback()
-            return _result(op, "memory", success=True, verified=True, summary=f"Remembered: {label[:140]}")
-        db.add(models.MemoryFact(user_id=user.id, fact=label[:400], source=text(action, "source")[:160]))
-        error = _commit(db, op, "memory")
-        if error:
-            return _result(op, "memory", success=False, error=error)
-        return _result(op, "memory", success=True, verified=True, summary=f"Remembered: {label[:140]}")
 
     if verb not in WRITE_OPS:
         return _result(op, kind, success=False, error=f"I do not know how to {op}.")
@@ -382,19 +479,33 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
         if hasattr(row, "updated_at"):
             row.updated_at = utcnow()
         db.add(row)
-        error = _commit(db, op, kind)
-        if error:
-            return _result(op, kind, success=False, error=error)
-
+        outcome = _commit(db, op, kind)
         row_id = row.id
-        fresh = _read_back(db, spec.model, row_id)
+
+        if not outcome.ok and outcome.definite:
+            return _result(op, kind, success=False, error=outcome.error)
+
+        # Committed, or the acknowledgement was lost: the row itself decides. A
+        # probe that cannot read proves nothing, so it yields "uncertain".
+        if outcome.ok:
+            fresh = _read_back(db, spec.model, row_id)
+        else:
+            fresh = _probe_row(db, spec.model, row_id)[0]
         if fresh is None:
+            if not outcome.ok:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
             obs.inc("verify_failed")
             return _result(op, kind, success=False, entity_id=row_id,
                            error="The write did not persist — nothing was saved.")
         after = {k: as_plain(getattr(fresh, k, None)) for k in fields}
         mismatched = [k for k, v in fields.items() if not _same(after.get(k), as_plain(v))]
         if mismatched:
+            if not outcome.ok:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
             obs.inc("verify_failed")
             obs.event("verify_failed", operation=op, entity_type=kind, entity_id=row_id,
                       fields=mismatched)
@@ -438,10 +549,22 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
         else:
             db.add(models.Deletion(id=str(row_id), user_id=user.id, kind=kind))
             db.delete(row)
-        error = _commit(db, op, kind)
-        if error:
-            return _result(op, kind, success=False, entity_id=row_id, error=error)
-        if _read_back(db, spec.model, row_id) is not None:
+        outcome = _commit(db, op, kind)
+        if not outcome.ok and outcome.definite:
+            return _result(op, kind, success=False, entity_id=row_id, error=outcome.error)
+        if outcome.ok:
+            remaining = _read_back(db, spec.model, row_id)
+        else:
+            remaining, probe_ran = _probe_row(db, spec.model, row_id)
+            if remaining is None and not probe_ran:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
+        if remaining is not None:
+            if not outcome.ok:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
             obs.inc("verify_failed")
             obs.event("verify_failed", operation=op, entity_type=kind, entity_id=row_id)
             return _result(op, kind, success=False, entity_id=row_id,
@@ -466,14 +589,21 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     if hasattr(row, "updated_at"):
         row.updated_at = utcnow()
 
-    error = _commit(db, op, kind)
-    if error:
-        return _result(op, kind, success=False, entity_id=row_id,
-                       changes={k: {"before": before[k], "after": as_plain(v)} for k, v in fields.items()},
-                       error=error)
+    outcome = _commit(db, op, kind)
+    intended = {k: {"before": before[k], "after": as_plain(v)} for k, v in fields.items()}
+    if not outcome.ok and outcome.definite:
+        return _result(op, kind, success=False, entity_id=row_id, changes=intended,
+                       error=outcome.error)
 
-    fresh = _read_back(db, spec.model, row_id)
+    if outcome.ok:
+        fresh = _read_back(db, spec.model, row_id)
+    else:
+        fresh = _probe_row(db, spec.model, row_id)[0]
     if fresh is None:
+        if not outcome.ok:
+            obs.inc("commit_unconfirmed")
+            return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                           error=UNCERTAIN)
         obs.inc("verify_failed")
         return _result(op, kind, success=False, entity_id=row_id,
                        error=(f"That {spec.label} disappeared during the update — "
@@ -482,6 +612,10 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     mismatched = [k for k, v in fields.items() if not _same(after.get(k), as_plain(v))]
     changes = {k: {"before": before[k], "after": after.get(k)} for k in fields}
     if mismatched:
+        if not outcome.ok:
+            obs.inc("commit_unconfirmed")
+            return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                           changes=changes, error=UNCERTAIN)
         obs.inc("verify_failed")
         obs.event("verify_failed", operation=op, entity_type=kind, entity_id=row_id,
                   fields=mismatched, changes=changes)
