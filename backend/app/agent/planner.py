@@ -319,6 +319,15 @@ _RANK_CUE = re.compile(
     r"|\brank\b[^?]{0,30}\b(?:expenses?|categor(?:y|ies))\b",
     re.I)
 _RANK_LIMIT = re.compile(r"\btop\s+(\d{1,2})\b", re.I)
+# "Give me my financial health summary", "how am I doing financially",
+# "summarise my finances for October", "financial overview" — one period, many
+# components, so this intent outranks the individual analytics (Task 28.5).
+_HEALTH_CUE = re.compile(
+    r"\bfinancial\s+(?:health|overview|summary|position|picture|snapshot)\b"
+    r"|\bhow\s+am\s+i\s+doing\b"
+    r"|\bsummari[sz]e\s+(?:my|our)\s+(?:finances?|money|spending|month|year)\b"
+    r"|\b(?:my|our)\s+finances\b",
+    re.I)
 # "Is this expense unusual?", "unusually high", "much higher than normal",
 # "outlier" — a question about individual expenses against their own history.
 _UNUSUAL_CUE = re.compile(
@@ -481,7 +490,8 @@ def _next_context(resolved: dict, intent: str | None, prior: dict | None, turn: 
         return prior if isinstance(prior, dict) else None
     # A merchant or listing answer has no filters to remember, but its shape is
     # what a later "what about June?" needs, so those turns are remembered too.
-    keeps_shape = intent in ("merchants", "list_transactions", "category_ranking")
+    keeps_shape = intent in ("merchants", "list_transactions", "category_ranking",
+                            "financial_health_summary")
     if intent and (resolved.get("category") or resolved.get("month") or keeps_shape):
         return {
             "intent": intent,
@@ -517,6 +527,26 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     # A change of records runs no query and leaves the analytics thread alone.
     if _is_write_request(text):
         return done(None, {}, None)
+
+    # An overall summary is one period with several parts. It outranks the
+    # single-question intents, and it never inherits a category or merchant
+    # filter — "my finances" is the whole picture.
+    if _HEALTH_CUE.search(text) and not _WRITE_CUE.search(text):
+        scope_year = None
+        scope_month = month
+        if not scope_month:
+            named_year = _YEAR_RE.search(text)
+            if named_year:
+                scope_year = int(named_year.group(1))
+            elif re.search(r"\bthis year\b|\bcurrent year\b|\byear\b(?!s)", text):
+                scope_year = today.year - 1 if re.search(r"\blast year\b", text) else today.year
+        if scope_year is None and not scope_month:
+            scope_month = analytics.current_month(today)
+        facts = analytics.financial_health_summary(db, user, month=scope_month,
+                                                   year=scope_year, today=today)
+        resolved.update({"category": None, "comparison_target": None, "month": scope_month})
+        return done("financial_health_summary",
+                    {"month": scope_month, "year": scope_year}, facts)
 
     # An unusual-expense question is about individual outliers against each
     # category's own history. It runs before the category and ambiguity checks:
@@ -684,13 +714,18 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         # "what about June?" after a listing is the same listing, one month on.
         month_switch = bool(
             isinstance(context, dict)
-            and thread_intent in ("list_transactions", "merchants", "category_ranking")
+            and thread_intent in ("list_transactions", "merchants", "category_ranking",
+                                  "financial_health_summary")
             and month and not mentioned
             and _SWITCH_CUE.search(message)
             and not _SUMMARY_CUES.search(text)
             and not _COMPARE_CUE.search(text)
             and not _WRITE_CUE.search(text)
         )
+        if month_switch and thread_intent == "financial_health_summary":
+            facts = analytics.financial_health_summary(db, user, month=month, today=today)
+            return done("financial_health_summary", {"month": month, "year": None}, facts)
+
         if month_switch and thread_intent == "category_ranking":
             top = _RANK_LIMIT.search(text)
             rank_limit = int(top.group(1)) if top else 5

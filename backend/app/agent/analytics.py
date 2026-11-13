@@ -292,6 +292,93 @@ def category_by_month(db: Session, user, month: str) -> dict:
     }
 
 
+# ── financial health summary ─────────────────────────────────────────────────
+
+def _totals(db: Session, user, start: date, end: date) -> tuple[Decimal, Decimal, int, int]:
+    """Income and expense for one window, in one GROUP BY: Decimal in, Decimal out.
+
+    Groups by the stored `kind` and applies the project's bucket rule in Python
+    (income stays income, everything else is expense) — the same rule `summary()`
+    uses, and it groups by a plain column, which PostgreSQL accepts.
+    """
+    rows = (
+        _filtered(db, user, start=start, end=end)
+        .with_entities(models.Transaction.kind, func.sum(models.Transaction.amount),
+                       func.count(models.Transaction.id))
+        .group_by(models.Transaction.kind)
+        .all()
+    )
+    income = expense = money.ZERO
+    income_count = expense_count = 0
+    for kind, total, count in rows:
+        if kind == "income":
+            income += money.to_money(total, default=money.ZERO)
+            income_count += int(count or 0)
+        else:
+            expense += money.to_money(total, default=money.ZERO)
+            expense_count += int(count or 0)
+    return income, expense, income_count, expense_count
+
+
+def financial_health_summary(db: Session, user, *, month: str | None = None,
+                             year: int | None = None, today: date | None = None,
+                             limit: int = 3) -> dict:
+    """One period, composed from the analytics that already answer its parts.
+
+    Nothing here calculates anything new: totals come from one aggregate, the
+    ranking from category_ranking, the largest row from highest_transactions and
+    the outliers from unusual_expenses. Net cash flow is income minus expenses —
+    it is not a balance and not savings.
+    """
+    if month:
+        start, end = month_bounds(month)
+        scope = month
+    elif year is not None:
+        start, end = date(int(year), 1, 1), date(int(year), 12, 31)
+        scope = f"{int(year):04d}"
+    else:
+        month = current_month(today)
+        start, end = month_bounds(month)
+        scope = month
+    limit = 3 if limit is None else max(1, min(int(limit), 10))
+
+    income, expense, income_count, expense_count = _totals(db, user, start, end)
+    facts = {
+        "period": {"request": scope, "kind": "year" if year is not None and not month else "month",
+                   "start": start.isoformat(), "end": end.isoformat()},
+        "income": money.number(income),
+        "expenses": money.number(expense),
+        "net_cash_flow": money.number(income - expense),
+        "counts": {"income": income_count, "expense": expense_count},
+    }
+
+    if not income_count and not expense_count:
+        return {**facts, "status": "no_data", "top_categories": [], "biggest_expense": None,
+                "unusual": {"status": "no_data", "count": 0, "items": [],
+                            "categories_needing_history": []},
+                "message": f"No transactions are recorded in {scope}."}
+
+    ranking = category_ranking(db, user, month=month, year=None if month else year, limit=limit)
+    biggest = highest_transactions(db, user, kind="expense", month=month,
+                                   year=None if month else year, limit=1)
+    outliers = unusual_expenses(db, user, month=month, year=None if month else year, limit=limit)
+
+    return {
+        **facts,
+        "status": "ok",
+        # Expense-only by construction: category_ranking filters kind='expense'.
+        "top_categories": ranking.get("categories", []),
+        "biggest_expense": (biggest.get("items") or [None])[0],
+        "unusual": {
+            "status": outliers.get("status"),
+            "count": outliers.get("count", 0),
+            "items": outliers.get("anomalies", []),
+            "categories_needing_history": outliers.get("categories_needing_history", []),
+            "min_history": outliers.get("min_history"),
+        },
+    }
+
+
 # ── category ranking ─────────────────────────────────────────────────────────
 
 def category_ranking(db: Session, user, *, month: str | None = None, year: int | None = None,
@@ -864,10 +951,13 @@ def search(db: Session, user, *, text: str | None = None, category: str | None =
     }
 
 
-def highest_transactions(db: Session, user, kind: str = "expense", month: str | None = None, limit: int = 3) -> dict:
+def highest_transactions(db: Session, user, kind: str = "expense", month: str | None = None,
+                         limit: int = 3, year: int | None = None) -> dict:
     start = end = None
     if month:
         start, end = month_bounds(month)
+    elif year is not None:
+        start, end = date(int(year), 1, 1), date(int(year), 12, 31)
     query = _filtered(db, user, start=start, end=end, kind=kind)
     rows = (
         query.order_by(models.Transaction.amount.desc(), models.Transaction.id.asc())

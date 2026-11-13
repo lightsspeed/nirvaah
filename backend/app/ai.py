@@ -377,6 +377,8 @@ Rules:
 
 30. Unusual-expense FACTS are database evidence: "<median> + MAD" gave each "anomalies" entry its "median" (the category's usual amount), "difference" and "ratio" (how many times the median it is), "z" and "history_count". Name the transaction's date and category, its amount, the usual amount and the ratio. STATUS ok with an empty "anomalies" list means nothing was unusually high — say exactly that. STATUS insufficient_history or a non-empty "categories_needing_history" means there is too little history to judge: say so and never call an amount unusual anyway. When a "probe" object is present the user named that amount: use its "unusual", "ratio" and "median" as given. Never compute your own baseline, threshold or z-score.
 
+31. Financial-health FACTS describe one period: "period" (start, end, request), "income", "expenses", "net_cash_flow", "counts", "top_categories" (at most three, expenses only), "biggest_expense" and "unusual". Name the period first, then give income, expenses and net cash flow exactly as returned — call it "net cash flow", never a balance or savings. List the top categories with their totals, name the biggest expense with its date and category, and mention unusual expenses only when "unusual.count" is above zero; if "unusual.status" is insufficient_history, say there is not enough history to judge. "counts" tells you whether a zero is real: if counts.income is 0 say no income was recorded. STATUS no_data means the period is empty — say so and quote no figures. Never judge whether the user is healthy, saving enough or overspending: the facts contain arithmetic, not advice.
+
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
 Use "actions": [] when nothing should change.
