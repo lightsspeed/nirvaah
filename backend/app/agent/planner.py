@@ -357,6 +357,18 @@ _COMPLETED_CUE = re.compile(
     r"|\bhow\s+many\s+tasks?\s+(?:did\s+i\s+|have\s+i\s+)?(?:complete|finish|close)\w*\b"
     r"|\bcompletion\s+history\b",
     re.I)
+# "Is there anything I should know?", "any insights for me?", "what's happening
+# with my tasks?" — the proactive insight list (Task 30.1).
+_INSIGHTS_CUE = re.compile(
+    r"\b(?:personal\s+)?insights?\b"
+    r"|\bis\s+there\s+anything\s+(?:i\s+should\s+know|i\s+need\s+to\s+know|important)\b"
+    r"|\banything\s+(?:important\s+)?(?:i\s+might\s+be\s+missing|i\s+should\s+know|"
+    r"i\s+need\s+to\s+know)\b"
+    r"|\bwhat(?:'s|s|\s+s|\s+is)?\s+happening\s+with\s+my\s+tasks?\b"
+    r"|\bwhat(?:'s|s|\s+s|\s+is)?\s+going\s+on\s+with\s+my\s+tasks?\b"
+    r"|\bwhat\s+am\s+i\s+missing\b"
+    r"|\banything\s+urgent\b",
+    re.I)
 # "Give me my weekly review", "how was my week?", "what should I focus on next
 # week?" — one review of the current Monday–Sunday week (Task 29.4).
 _WEEKLY_CUE = re.compile(
@@ -645,6 +657,16 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         result = done("tasks_due",
                       {"window": window["window"], "start": window["start"],
                        "end": window["end"]}, facts)
+        result["context"] = context if isinstance(context, dict) else None
+        return result
+
+    # Proactive insights come after every explicit task question: a due-date,
+    # attention, review or history request keeps its own intent, and only a
+    # general "anything I should know?" lands here. Read-only, no actions.
+    if _INSIGHTS_CUE.search(text):
+        facts = task_intel.generate_task_insights(db, user, today=today,
+                                                  timezone_name=timezone_name)
+        result = done("personal_insights", {"today": today.isoformat()}, facts)
         result["context"] = context if isinstance(context, dict) else None
         return result
 

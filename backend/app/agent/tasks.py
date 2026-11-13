@@ -700,3 +700,171 @@ def weekly_review(db: Session, user, *, today: date | None = None,
     if not progress["total_count"]:
         facts["message"] = "No tasks recorded yet."
     return facts
+
+
+# ── insights ────────────────────────────────────────────────────────────────
+
+INSIGHT_LIMIT = 10
+INSIGHT_SEVERITY = {"critical": 0, "warning": 1, "info": 2}
+# Within one severity, the order the user should read them in.
+INSIGHT_ORDER = {"high_priority_overdue": 0, "overdue_cluster": 1, "due_soon": 2, "long_open": 3}
+# Three of a kind is a pattern worth naming; one or two is ordinary work.
+RULE_B_OVERDUE = 3
+RULE_C_DUE_SOON = 3
+RULE_D_LONG_OPEN = 3
+
+
+def _long_open(db: Session, user, today: date, limit: int):
+    """Open tasks older than the staleness threshold: (count, rows)."""
+    cutoff = today - timedelta(days=STALE_DAYS)
+    query = _open(db, user).filter(func.date(models.Task.created_at) <= cutoff)
+    count = query.with_entities(func.count(models.Task.id)).scalar() or 0
+    rows = (query.order_by(models.Task.created_at.asc(), models.Task.id.asc())
+            .limit(limit).all())
+    return int(count), rows
+
+
+def _count_open(db: Session, user, *conditions) -> int:
+    query = _open(db, user).filter(*conditions)
+    return int(query.with_entities(func.count(models.Task.id)).scalar() or 0)
+
+
+def generate_task_insights(db: Session, user, *, today: date | None = None,
+                           timezone_name: str | None = None,
+                           limit: int = INSIGHT_LIMIT) -> dict:
+    """Deterministic, evidence-backed observations about the task list.
+
+    Every figure comes from due_tasks / the long-open query and every insight
+    names the tasks behind it. The rules describe a situation; none of them
+    decides anything, recommends a change it has already made, or invents a
+    consequence. When nothing qualifies the result is an explicit empty list —
+    there is no generic filler insight.
+    """
+    today = today or date.today()
+    limit = INSIGHT_LIMIT if limit is None else max(1, min(int(limit), MAX_LIMIT))
+    evaluated_at = iso_utc(utcnow())
+
+    # Evaluate against the largest page the module allows, then cut the answer
+    # to  — otherwise a small limit would silently shrink every count.
+    page = MAX_LIMIT
+    overdue = due_tasks(db, user, window="overdue", today=today, limit=page)
+    due_today = due_tasks(db, user, window="today", today=today, limit=page)
+    due_tomorrow = due_tasks(db, user, window="tomorrow", today=today, limit=page)
+    long_open_count, long_open_rows = _long_open(db, user, today, page)
+
+    insights: list[dict] = []
+
+    def insight(key: str, kind: str, severity: str, title: str, message: str,
+                evidence: dict, task_ids: list[str], action: str) -> dict:
+        return {
+            "id": key,
+            "dedupe_key": key,
+            "type": kind,
+            "severity": severity,
+            "title": title,
+            "message": message,
+            "evidence": evidence,
+            "task_ids": task_ids,
+            "recommended_action": action,
+            "evaluated_at": evaluated_at,
+        }
+
+    # ── Rule A: a high-priority task is already late ──────────────────────
+    high_overdue_total = _count_open(db, user, models.Task.due.isnot(None),
+                                     models.Task.due < today,
+                                     func.lower(models.Task.priority) == "high")
+    high_overdue_rows = [task for task in overdue["tasks"]
+                         if (task["priority"] or "").lower() == "high"]
+    for task in high_overdue_rows[:MAX_LIMIT]:
+        days = task["days_overdue"]
+        insights.append(insight(
+            f"task_overdue_high:{task['id']}", "high_priority_overdue", "critical",
+            "High-priority task is overdue",
+            f"\"{task['text']}\" is overdue by {days} {'day' if days == 1 else 'days'} "
+            f"and is marked high priority.",
+            {"task_id": task["id"], "text": task["text"], "due": task["due"],
+             "days_overdue": days, "priority": task["priority"],
+             "high_priority_overdue_total": high_overdue_total},
+            [task["id"]],
+            "Decide today whether to finish it, move the due date, or drop it.",
+        ))
+
+    # ── Rule B: several tasks are past due (the cluster, not the same list) ─
+    if overdue["count"] >= RULE_B_OVERDUE:
+        oldest_days = max((task["days_overdue"] or 0) for task in overdue["tasks"]) \
+            if overdue["tasks"] else 0
+        insights.append(insight(
+            "overdue_cluster", "overdue_cluster", "warning",
+            "Several tasks are overdue",
+            f"{overdue['count']} open tasks are past due, {high_overdue_total} of them high "
+            f"priority; the oldest is {oldest_days} days late.",
+            {"overdue_count": overdue["count"],
+             "high_priority_overdue": high_overdue_total,
+             "oldest_days_overdue": oldest_days,
+             "task_ids": [task["id"] for task in overdue["tasks"]]},
+            [task["id"] for task in overdue["tasks"]],
+            "Review the overdue list and reschedule what is no longer realistic.",
+        ))
+
+    # ── Rule C: a cluster of deadlines inside 48 hours ────────────────────
+    due_soon_count = due_today["count"] + due_tomorrow["count"]
+    if due_soon_count >= RULE_C_DUE_SOON:
+        soon_rows = due_today["tasks"] + due_tomorrow["tasks"]
+        insights.append(insight(
+            "due_soon_48h", "due_soon", "warning",
+            "Deadlines within 48 hours",
+            f"{due_soon_count} tasks are due within the next 48 hours "
+            f"({due_today['count']} today, {due_tomorrow['count']} tomorrow).",
+            {"due_today": due_today["count"], "due_tomorrow": due_tomorrow["count"],
+             "total": due_soon_count,
+             "task_ids": [task["id"] for task in soon_rows]},
+            [task["id"] for task in soon_rows],
+            "Pick the most important one and set aside time for it today.",
+        ))
+
+    # ── Rule D: a cluster of tasks left open a long time ──────────────────
+    if long_open_count >= RULE_D_LONG_OPEN:
+        oldest_open = max(((today - row.created_at.date()).days for row in long_open_rows),
+                          default=0)
+        insights.append(insight(
+            f"long_open_{STALE_DAYS}d", "long_open", "info",
+            "Tasks open for a long time",
+            f"{long_open_count} tasks have been open for at least {STALE_DAYS} days "
+            f"(the oldest for {oldest_open} days).",
+            {"long_open_count": long_open_count, "threshold_days": STALE_DAYS,
+             "oldest_days_open": oldest_open,
+             "task_ids": [row.id for row in long_open_rows]},
+            [row.id for row in long_open_rows],
+            "Close, reschedule or drop the ones that no longer matter.",
+        ))
+
+    insights.sort(key=lambda item: (INSIGHT_SEVERITY[item["severity"]],
+                          INSIGHT_ORDER.get(item["type"], 99), item["id"]))
+    shown = insights[:limit]
+    counts = {"critical": sum(1 for item in insights if item["severity"] == "critical"),
+              "warning": sum(1 for item in insights if item["severity"] == "warning"),
+              "info": sum(1 for item in insights if item["severity"] == "info")}
+
+    facts = {
+        "status": "ok" if shown else "no_data",
+        "evaluated_at": evaluated_at,
+        "today": today.isoformat(),
+        "timezone": timezone_name or "UTC",
+        "limit": limit,
+        "count": len(insights),
+        "shown": len(shown),
+        "truncated": len(shown) < len(insights),
+        "counts": counts,
+        "insights": shown,
+        "rules": {
+            "high_priority_overdue": "an open task is overdue and high priority",
+            "overdue_cluster": f"at least {RULE_B_OVERDUE} open tasks are overdue",
+            "due_soon": f"at least {RULE_C_DUE_SOON} open tasks are due today or tomorrow",
+            "long_open": f"at least {RULE_D_LONG_OPEN} open tasks have been open "
+                         f"{STALE_DAYS}+ days",
+        },
+    }
+    if not shown:
+        facts["message"] = ("No significant task-related insights were found in the "
+                            "current data.")
+    return facts
