@@ -147,6 +147,11 @@ def rename_conversation(conversation_id: str, data: ConversationIn, db: Session 
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
     row = _conversation(db, user, conversation_id)
+    # chat_focus points at the conversation with no ON DELETE action, so the focus
+    # row has to go in the same transaction; Postgres otherwise rejects the delete
+    # and the conversation can never be removed. focus_mod.clear() commits on its
+    # own, which would split the delete, so the rows are removed here directly.
+    db.query(models.ChatFocus).filter(models.ChatFocus.conversation_id == row.id).delete()
     db.query(models.ChatMessage).filter(models.ChatMessage.conversation_id == row.id).delete()
     db.delete(row)
     db.commit()
