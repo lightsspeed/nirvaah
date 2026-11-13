@@ -352,3 +352,184 @@ def test_a_clarification_turn_executes_nothing(db, user, conversation, scripted)
     assert result["applied"] == [] and result["pending"] == []
     assert db.query(models.Transaction).count() == before
     assert "which transactions do you mean" in result["reply"].lower()
+
+
+# ── E. hardening (Task 27.2.1) ─────────────────────────────────────────────
+# H2: a pronoun-only write is a write, not an analytics question.
+
+@pytest.mark.parametrize("message", [
+    "it is done", "that's done", "finished it", "cancel it", "it's paid",
+])
+def test_pronoun_only_writes_are_executed_not_clarified(db, user, conversation, scripted, message):
+    create = {"reply": "Created.", "actions": [
+        {"op": "add_task", "text": "Water the plants", "due": "2026-11-12"}]}
+    scripted(create)
+    first = graph.run_turn(db, user, conversation.id, "create a task called Water the plants", [], turn=1)
+    task_id = first["applied"][0]["entity_id"]
+
+    scripted({"reply": "Done.", "actions": [{"op": "update_task", "due": "2026-11-16"}]})
+    # The action carries no id: only chat_focus can supply one.
+    second = graph.run_turn(db, user, conversation.id, message, [], turn=2)
+
+    assert second["applied"], f"{message!r} was not executed: {second['reply']!r}"
+    assert second["applied"][0]["entity_id"] == task_id
+    db.expire_all()
+    assert db.get(models.Task, task_id).due == date(2026, 11, 16)
+    assert "which transactions do you mean" not in second["reply"].lower()
+
+
+def test_an_analytics_reference_without_context_still_asks():
+    resolved = planner.resolve_followup("Show me those transactions", None, TODAY)
+
+    assert resolved["ambiguous"] is True
+
+
+# H1: an explicit reset wins, and it survives the graph and the next request.
+
+def test_overall_clears_the_graph_state(db, groceries, conversation, scripted):
+    scripted({"reply": "ok", "actions": []})
+
+    result = graph.run_turn(db, groceries, conversation.id, "How much did I spend overall?", [],
+                            turn=2, chat_context=context())
+
+    assert result["chat_context"] == {}
+    assert "THREAD CONTEXT: " not in result["system"]
+
+
+def test_overall_persists_null_and_does_not_resurrect(db, groceries, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+
+    _ask(client, conversation_id, "How much did I spend overall?")
+    assert "THREAD CONTEXT: " not in model.last_system
+    rows = (db.query(models.ChatMessage)
+            .filter(models.ChatMessage.conversation_id == conversation_id,
+                    models.ChatMessage.role == "assistant")
+            .order_by(models.ChatMessage.id).all())
+    assert json.loads(rows[-1].meta)["analytics"] is None
+
+    _ask(client, conversation_id, "Why was April highest?")
+    assert "VERIFIED ANALYTICS (intent:" not in model.last_system
+
+
+# M1: merchant results say they cover every category.
+
+def test_merchants_disclose_their_scope(db, groceries, conversation, scripted):
+    scripted({"reply": "ok", "actions": []})
+
+    result = graph.run_turn(db, groceries, conversation.id, "Which merchant contributed most?", [],
+                            turn=2, chat_context=context())
+    facts = result["analytics"]["facts"]
+
+    assert facts["scope"] == "all categories"
+    assert facts["category"] is None
+    assert '"scope": "all categories"' in result["system"]
+    assert "THREAD CONTEXT: category=Groceries" not in result["system"]
+    assert "THREAD CONTEXT: month=2026-04" in result["system"]
+
+
+# M2: "all expenses" steps out of the category but keeps the month.
+
+@pytest.mark.parametrize("message,month", [
+    ("Show all expenses from September.", "2026-09"),
+    ("List all my transactions in April.", "2026-04"),
+    ("Show all spends in May", "2026-05"),
+    ("Show all spending in June", "2026-06"),
+    ("Show all payments in July", "2026-07"),
+    ("Show me everything from September.", "2026-09"),
+])
+def test_all_scope_clears_the_category_and_keeps_the_month(db, groceries, message, month):
+    resolved = planner.resolve_followup(message, context(), TODAY, pool=["Groceries"], turn=2)
+
+    assert resolved["category"] is None
+    assert resolved["month"] == month
+    assert resolved["reset"] is True
+
+
+def test_all_expenses_lists_every_category(db, groceries):
+    analysis = planner.analyse(db, groceries, "Show all expenses from September.", today=TODAY,
+                               context=context(), turn=2)
+
+    assert analysis["intent"] == "list_transactions"
+    assert analysis["facts"]["category"] is None
+    assert analysis["facts"]["month"] == "2026-09"
+
+
+# L1: metadata that decodes to something other than an object is ignored.
+
+@pytest.mark.parametrize("meta", ["null", "5", '"text"', "[]"])
+def test_malformed_metadata_is_ignored(db, groceries, client, scripted, meta):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    db.add(models.ChatMessage(conversation_id=conversation_id, user_id=groceries.id,
+                              role="assistant", content="old", meta=meta))
+    db.commit()
+
+    reply = _ask(client, conversation_id, "hello")
+
+    assert reply["content"] == "ok"
+    assert "THREAD CONTEXT: " not in model.last_system
+
+
+def test_an_explicit_null_stops_older_context(db, groceries, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    db.add(models.ChatMessage(conversation_id=conversation_id, user_id=groceries.id,
+                              role="assistant", content="a1",
+                              meta=json.dumps({"analytics": context()})))
+    db.add(models.ChatMessage(conversation_id=conversation_id, user_id=groceries.id,
+                              role="assistant", content="a2",
+                              meta=json.dumps({"analytics": None})))
+    db.commit()
+
+    _ask(client, conversation_id, "Why was April highest?")
+
+    assert "THREAD CONTEXT: " not in model.last_system
+    assert "VERIFIED ANALYTICS (intent:" not in model.last_system
+
+
+# L2: a failed turn does not advance the thread's turn number.
+
+def test_failed_turns_do_not_advance_the_context_turn(db, groceries, client, scripted, monkeypatch):
+    import app.agent.providers as providers
+
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+    _ask(client, conversation_id, "How much are we spending on groceries on average?")
+
+    def boom(*args, **kwargs):
+        raise providers.ProviderError("down")
+
+    monkeypatch.setattr(providers, "ask", boom)
+    for _ in range(2):
+        response = client.post(f"/api/chat/conversations/{conversation_id}/messages",
+                               json={"message": "Why was April highest?"})
+        assert response.status_code == 503
+
+    monkeypatch.setattr(providers, "ask", model)
+    _ask(client, conversation_id, "Why was April highest?")
+
+    rows = (db.query(models.ChatMessage)
+            .filter(models.ChatMessage.conversation_id == conversation_id,
+                    models.ChatMessage.role == "assistant")
+            .order_by(models.ChatMessage.id).all())
+    stored = json.loads(rows[-1].meta)["analytics"]
+    assert stored["turn"] == 2, "two failed attempts must not skip turns"
+
+
+# L3: an unknown category keeps the thread the user was on.
+
+def test_an_unknown_category_keeps_the_previous_context(db, groceries):
+    prior = context()
+    analysis = planner.analyse(db, groceries, "How much did I spend on zzz in May?", today=TODAY,
+                               context=prior, turn=2)
+
+    assert analysis["intent"] == "unknown_category"
+    assert analysis["context"]["category"] == "Groceries"
+    assert analysis["context"]["month"] == "2026-04"
+
+    corrected = planner.analyse(db, groceries, "No, I meant fuel", today=TODAY,
+                                context=analysis["context"], turn=3)
+    assert corrected["facts"]["categories"] == ["Fuel"]
+    assert corrected["facts"]["month"] == "2026-04"

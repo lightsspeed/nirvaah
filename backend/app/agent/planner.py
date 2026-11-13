@@ -160,7 +160,7 @@ _DEICTIC = re.compile(
 # "no, I meant fuel" — the user is correcting a dimension we already have.
 _CORRECTION = re.compile(r"\b(no|nope|not|i meant|i mean|actually|rather|instead)\b", re.I)
 # "overall", "in total" — the user is stepping out of the thread on purpose.
-_ALL_CUE = re.compile(r"\b(overall|in total|all categories|everything|across all|altogether)\b", re.I)
+_ALL_CUE = re.compile(r"\b(overall|in total|all categories|everything|across all|altogether|all (?:the |my |our |these |those )?(?:expenses?|transactions?|spends?|spending|payments?))\b", re.I)
 # A question about a dimension (merchant, average…) is a follow-up even when it
 # names neither the category nor the month.
 _DIMENSION_Q = re.compile(
@@ -206,6 +206,10 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
     all_cue = bool(_ALL_CUE.search(text))
     writing = bool(_WRITE_CUE.search(text))
     switch = bool(_SWITCH_CUE.search(message))
+    # A pronoun alone is not an analytics question: "it is done" is about a record.
+    # Only ask for clarification when the message is also asking about spending.
+    analytics_question = bool(_LIST_NOUN_RE.search(text) or _SUMMARY_CUES.search(text)
+                              or _DIMENSION_Q.search(text))
 
     expired = False
     if isinstance(prior, dict) and turn is not None and prior.get("turn") is not None:
@@ -248,7 +252,7 @@ def resolve_followup(message: str, prior: dict | None, today: date | None = None
 
     ambiguous = False
     question = None
-    if deictic and not (category or month) and not writing:
+    if deictic and not (category or month) and analytics_question and not writing:
         ambiguous = True
         question = ('Which transactions do you mean? Tell me the category and month — '
                     'for example "Groceries in April".')
@@ -277,7 +281,8 @@ def _next_context(resolved: dict, intent: str | None, prior: dict | None, turn: 
     """The filters to remember for the next turn — no figures, no rows."""
     if resolved.get("reset"):
         return None
-    if intent == "clarify":
+    if intent in ("clarify", "unknown_category"):
+        # The question could not be answered, so the thread it came from must survive.
         return prior if isinstance(prior, dict) else None
     if intent and (resolved.get("category") or resolved.get("month")):
         return {
@@ -370,8 +375,10 @@ def analyse(db: Session, user, message: str, today: date | None = None,
         # "which merchant contributed most?" is a question about merchants, even
         # when the category and month were inherited — answer the question asked.
         if re.search(r"\bmerchant|where did i spend|who did i pay|most frequent\b", text):
-            return done("merchants", {"month": month},
-                        analytics.merchants(db, user, month))
+            facts = analytics.merchants(db, user, month)
+            # merchants() has no category filter, so the answer covers every category.
+            facts = {**facts, "category": None, "scope": "all categories"}
+            return done("merchants", {"month": month}, facts)
 
         if category and month:
             return done("category_month", {"category": category, "month": month},

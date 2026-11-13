@@ -135,6 +135,23 @@ def _fit_facts(facts: dict, limit: int) -> dict:
     return trimmed
 
 
+def _thread_context_line(prior: dict | None, carried: dict, intent: str | None) -> str:
+    """The prompt line for filters carried in from earlier turns, if there are any."""
+    if not isinstance(prior, dict) or not (prior.get("category") or prior.get("month")):
+        return ""
+    parts = []
+    # merchants() is not category-filtered, so naming a category would mislead.
+    if carried.get("category") and intent != "merchants":
+        parts.append(f"category={carried['category']}")
+    if carried.get("month"):
+        parts.append(f"month={carried['month']}")
+    if not parts:
+        return ""
+    return ("\n\nTHREAD CONTEXT: " + " ".join(parts) +
+            " (filters carried from earlier turns, not figures — answer from FACTS "
+            "and never reuse an earlier number).")
+
+
 def _facts_block(analysis: dict) -> str:
     """The verified analytics for this question, as the model sees them."""
     intent = analysis.get("intent")
@@ -188,17 +205,11 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         facts = _facts_block(analysis)
         if facts:
             system += "\n\n" + facts
-        carried = analysis.get("context") or thread_context or {}
-        # Only claim continuity when there really was an earlier thread.
-        if thread_context and (thread_context.get("category") or thread_context.get("month"))                 and (carried.get("category") or carried.get("month")):
-            bits = []
-            if carried.get("category"):
-                bits.append(f"category={carried['category']}")
-            if carried.get("month"):
-                bits.append(f"month={carried['month']}")
-            system += ("\n\nTHREAD CONTEXT: " + " ".join(bits) +
-                       " (filters carried from earlier turns, not figures — answer from FACTS "
-                       "and never reuse an earlier number).")
+        # The planner's answer is authoritative: a dict means "these are the
+        # filters now", an explicit None means "the user stepped out of the thread".
+        settled = analysis.get("context")
+        carried = settled if isinstance(settled, dict) else {}
+        system += _thread_context_line(thread_context, carried, analysis.get("intent"))
         if current_focus:
             system += (
                 "\n\nCURRENT FOCUS: this conversation is about "

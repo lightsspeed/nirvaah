@@ -80,6 +80,9 @@ def _last_analytics_context(prior: list[models.ChatMessage]) -> dict | None:
             meta = json.loads(message.meta or "{}")
         except ValueError:
             continue
+        if not isinstance(meta, dict):
+            # Valid JSON but not our metadata shape — ignore it, never fail a turn.
+            continue
         if "analytics" in meta:
             context = meta["analytics"]
             return context if isinstance(context, dict) else None
@@ -205,6 +208,9 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     )
     history = [{"role": m.role, "content": m.content} for m in prior if m.content]
     chat_context = _last_analytics_context(prior)
+    # Count replies, not messages: a failed turn leaves a user message behind and
+    # must not advance the thread's turn number (or its expiry clock).
+    turn = sum(1 for m in prior if m.role == "assistant") + 1
 
     db.add(models.ChatMessage(
         conversation_id=conversation_id, user_id=user.id, role="user", content=text, meta="{}",
@@ -212,7 +218,7 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     db.commit()
 
     try:
-        result = graph.run_turn(db, user, conversation_id, text, history, turn=len(prior) // 2 + 1,
+        result = graph.run_turn(db, user, conversation_id, text, history, turn=turn,
                                 prefer=(data.prefer or "").strip()[:80], today=today,
                                 chat_context=chat_context)
     except providers.ProviderError as exc:
@@ -265,7 +271,7 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     db.commit()
     db.refresh(assistant)
 
-    obs.event("turn_end", conversation_id=conversation_id, turn=len(prior) // 2 + 1,
+    obs.event("turn_end", conversation_id=conversation_id, turn=turn,
               applied=len(applied), pending=len(pending), failed=len(failed),
               verified=meta["verified"], runner=result.get("runner", ""),
               provider=result.get("provider", ""))
