@@ -19,6 +19,7 @@ from .timeutil import iso_utc, utcnow
 from .tz import user_today
 from .security import hash_password, verify_password, create_access_token, get_current_user
 from .agent.api import router as assistant_router
+from .agent.tasks import set_done
 
 Base.metadata.create_all(bind=engine)
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
@@ -624,7 +625,8 @@ def _apply_task(row, data):
     if "notes" in data:
         row.notes = str(data["notes"])
     if "done" in data:
-        row.done = bool(data["done"])
+        # Same transition rule as the assistant: set once, cleared on reopen.
+        set_done(row, bool(data["done"]))
     if "priority" in data:
         row.priority = str(data["priority"])[:12]
     if "category" in data:

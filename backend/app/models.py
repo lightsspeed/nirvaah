@@ -105,6 +105,9 @@ class Task(Base):
     due: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # Set when a task becomes complete, cleared when it is reopened. NULL for
+    # tasks completed before this column existed — their date is unknowable.
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class JournalEntry(Base):

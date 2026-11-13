@@ -12,12 +12,14 @@ date is a to-do, not a notification.
 from __future__ import annotations
 
 import re
-from datetime import date, timedelta
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..timeutil import iso_utc, local_range_bounds, utcnow
 
 
 WINDOWS = ("overdue", "today", "tomorrow", "upcoming", "week", "open", "date")
@@ -362,3 +364,204 @@ def due_tasks(db: Session, user, *, window: str = "today", today: date | None = 
     if not count:
         facts["message"] = f"No open tasks match {window}."
     return facts
+
+
+# ── lifecycle ───────────────────────────────────────────────────────────────
+
+def set_done(row, done: bool, *, was: bool | None = None,
+             now: datetime | None = None) -> None:
+    """The one completion rule, shared by the assistant and the REST path.
+
+    Becoming complete stamps UTC once. Repeating "done" keeps the original
+    stamp instead of re-dating the work. Reopening clears it, so completing
+    again records a new stamp. A legacy row that is already complete with no
+    stamp stays unstamped: its real date is unknowable, and inventing one would
+    put a false date in front of the user.
+    """
+    previous = bool(getattr(row, "done", False)) if was is None else bool(was)
+    done = bool(done)
+    if done and not previous:
+        row.completed_at = now or utcnow()
+    elif not done:
+        row.completed_at = None
+    row.done = done
+
+
+# ── completion history ──────────────────────────────────────────────────────
+
+HISTORY_PERIODS = ("today", "yesterday", "week", "month", "last7", "last30", "recent")
+# "last week" has no exact calendar meaning here; it is read as the last seven
+# days, which is the only window the assistant can count without guessing.
+_LAST7 = re.compile(r"\blast\s+7\s+days\b|\bpast\s+(?:7|seven)\s+days\b|\blast\s+week\b")
+_LAST30 = re.compile(r"\blast\s+30\s+days\b|\bpast\s+(?:30|thirty)\s+days\b|\blast\s+month\b")
+HISTORY_LIMIT = 20
+
+
+def history_period(text: str, today: date) -> str | None:
+    """Which completion period a message names, or None when it names none."""
+    lowered = text.lower()
+    if "yesterday" in lowered:
+        return "yesterday"
+    if _LAST7.search(lowered):
+        return "last7"
+    if _LAST30.search(lowered):
+        return "last30"
+    if re.search(r"\bthis\s+week\b", lowered):
+        return "week"
+    if re.search(r"\bthis\s+month\b", lowered):
+        return "month"
+    if re.search(r"\btoday\b", lowered):
+        return "today"
+    if re.search(r"\brecent(?:ly)?\b|\blatest\b|\bjust\b", lowered):
+        return "recent"
+    return None
+
+
+def history_window(period: str, today: date) -> dict:
+    """The local date range a completion period covers (`recent` has none)."""
+    if period == "yesterday":
+        day = today - timedelta(days=1)
+        return {"period": "yesterday", "start": day.isoformat(), "end": day.isoformat()}
+    if period == "week":
+        monday = today - timedelta(days=today.weekday())
+        return {"period": "week", "start": monday.isoformat(), "end": week_end(today).isoformat()}
+    if period == "month":
+        first = today.replace(day=1)
+        last = first + timedelta(days=monthrange(today.year, today.month)[1] - 1)
+        return {"period": "month", "start": first.isoformat(), "end": last.isoformat()}
+    if period == "last7":
+        return {"period": "last7", "start": (today - timedelta(days=6)).isoformat(),
+                "end": today.isoformat()}
+    if period == "last30":
+        return {"period": "last30", "start": (today - timedelta(days=29)).isoformat(),
+                "end": today.isoformat()}
+    if period == "recent":
+        return {"period": "recent", "start": None, "end": None}
+    return {"period": "today", "start": today.isoformat(), "end": today.isoformat()}
+
+
+def _period_bounds(window: dict, timezone_name: str | None):
+    """UTC instants [start, end) for the window's local dates."""
+    if not window["start"]:
+        return None, None
+    return local_range_bounds(date.fromisoformat(window["start"]),
+                              date.fromisoformat(window["end"]), timezone_name)
+
+
+def _task_row(row) -> dict:
+    return {
+        "id": row.id,
+        "text": row.text,
+        "due": row.due.isoformat() if row.due else None,
+        "priority": row.priority,
+        "category": row.category,
+        "completed_at": iso_utc(row.completed_at),
+    }
+
+
+def completed_tasks(db: Session, user, *, period: str = "recent", today: date | None = None,
+                    timezone_name: str | None = None, limit: int = HISTORY_LIMIT) -> dict:
+    """Tasks completed in one period, ordered by completion time, bounded.
+
+    Only rows with a `completed_at` can appear: a task finished before that
+    column existed has no knowable completion date, so it is counted in
+    `without_timestamp` and never presented as recent work.
+    """
+    today = today or date.today()
+    window = history_window(period, today)
+    limit = HISTORY_LIMIT if limit is None else max(1, min(int(limit), MAX_LIMIT))
+    start_utc, end_utc = _period_bounds(window, timezone_name)
+
+    query = db.query(models.Task).filter(models.Task.user_id == user.id,
+                                         models.Task.done.is_(True),
+                                         models.Task.completed_at.isnot(None))
+    if start_utc is not None:
+        query = query.filter(models.Task.completed_at >= start_utc,
+                             models.Task.completed_at < end_utc)
+    count = query.with_entities(func.count(models.Task.id)).scalar() or 0
+    rows = (query.order_by(models.Task.completed_at.desc(), models.Task.id.desc())
+            .limit(limit).all())
+
+    undated = (db.query(func.count(models.Task.id))
+               .filter(models.Task.user_id == user.id, models.Task.done.is_(True),
+                       models.Task.completed_at.is_(None)).scalar() or 0)
+
+    facts = {
+        "status": "ok" if count else "no_data",
+        "period": window["period"],
+        "start": window["start"],
+        "end": window["end"],
+        "start_utc": iso_utc(start_utc),
+        "end_utc": iso_utc(end_utc),
+        "timezone": timezone_name or "UTC",
+        "count": int(count),
+        "shown": len(rows),
+        "truncated": len(rows) < int(count),
+        "limit": limit,
+        "tasks": [_task_row(row) for row in rows],
+        "without_timestamp": int(undated),
+    }
+    if not count:
+        facts["message"] = (f"No completions are recorded for {window['period']}."
+                            if window["start"] else "No tasks have a completion time yet.")
+    return facts
+
+
+def task_progress(db: Session, user, *, period: str = "month", today: date | None = None,
+                  timezone_name: str | None = None) -> dict:
+    """Completed-in-period next to the current open state, counting in SQL.
+
+    `completed_count` is period-scoped; `pending_count`, `overdue_count` and
+    `total_count` describe right now. They are different cohorts, so the facts
+    also carry the all-time completion count and a `scope` note — there is no
+    rate to compute from them.
+    """
+    today = today or date.today()
+    window = history_window(period, today)
+    start_utc, end_utc = _period_bounds(window, timezone_name)
+
+    row = (db.query(
+        func.sum(case((models.Task.done.is_(True), 1), else_=0)),
+        func.sum(case((models.Task.done.is_(False), 1), else_=0)),
+        func.sum(case((and_(models.Task.done.is_(False), models.Task.due.isnot(None),
+                           models.Task.due < today), 1), else_=0)),
+        func.sum(case((and_(models.Task.done.is_(True),
+                            models.Task.completed_at.is_(None)), 1), else_=0)),
+        func.count(models.Task.id),
+    ).filter(models.Task.user_id == user.id).one())
+    completed_all, pending, overdue, undated, total = [int(value or 0) for value in row]
+
+    period_query = db.query(func.count(models.Task.id)).filter(
+        models.Task.user_id == user.id, models.Task.done.is_(True),
+        models.Task.completed_at.isnot(None))
+    if start_utc is not None:
+        period_query = period_query.filter(models.Task.completed_at >= start_utc,
+                                           models.Task.completed_at < end_utc)
+    completed_in_period = int(period_query.scalar() or 0)
+
+    return {
+        "status": "ok" if total else "no_data",
+        "period": window["period"],
+        "start": window["start"],
+        "end": window["end"],
+        "start_utc": iso_utc(start_utc),
+        "end_utc": iso_utc(end_utc),
+        "timezone": timezone_name or "UTC",
+        "completed_count": completed_in_period,
+        "pending_count": pending,
+        "overdue_count": overdue,
+        "total_count": total,
+        "completed_all_time": completed_all,
+        "without_timestamp": undated,
+        "scope": {
+            "completed_count": f"completed in {window['period']}",
+            "pending_count": "currently incomplete",
+            "overdue_count": "currently incomplete and past due",
+            "total_count": "every task this user has opened, any status",
+            "completed_all_time": "every task currently marked complete",
+            "without_timestamp": "completed, but with no recorded completion date",
+        },
+        "message": ("No tasks recorded yet." if not total else
+                    f"{completed_in_period} completed in {window['period']}, "
+                    f"{pending} still pending ({overdue} overdue)."),
+    }

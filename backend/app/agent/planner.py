@@ -347,6 +347,26 @@ _ATTENTION_CUE = re.compile(
     r"|\bprioriti[sz]e\s+my\s+tasks?\b"
     r"|\bwhat(?:'s|\s+is)\s+(?:most|the\s+most)\s+important\b",
     re.I)
+# "What did I complete today?", "show my recently completed tasks" — completion
+# history, which is a different question from what is still open (Task 29.3).
+_COMPLETED_CUE = re.compile(
+    r"\b(?:what|which)\s+(?:did|have)\s+i\s+(?:complete|finish|close|check\s+off)\w*\b"
+    r"|\b(?:completed|finished|closed)\s+(?:tasks?|items?|work)\b"
+    r"|\brecently\s+(?:completed|finished|done|closed)\b"
+    r"|\btasks?\s+(?:i|i've|i\s+have)\s+(?:completed|finished|closed)\b"
+    r"|\bhow\s+many\s+tasks?\s+(?:did\s+i\s+|have\s+i\s+)?(?:complete|finish|close)\w*\b"
+    r"|\bcompletion\s+history\b",
+    re.I)
+# "How am I doing with my tasks?", "how many are still pending?", "compare my
+# completed and pending tasks" — progress, which mixes a period with right now.
+_PROGRESS_CUE = re.compile(
+    r"\bhow\s+am\s+i\s+doing\s+with\s+(?:my\s+|the\s+)?tasks?\b"
+    r"|\btask\s+progress\b|\bprogress\s+on\s+my\s+tasks?\b"
+    r"|\bhow\s+many\s+tasks?\s+(?:are\s+)?(?:still\s+)?pending\b"
+    r"|\b(?:pending|open|outstanding)\s+(?:vs|versus|and)\s+(?:completed|finished|done)\b"
+    r"|\b(?:completed|finished|done)\s+(?:vs|versus|and)\s+(?:pending|open|outstanding)\b"
+    r"|\bhow\s+many\s+tasks?\s+(?:do\s+i\s+have|are\s+open|remain)\b",
+    re.I)
 # "What's due on my credit card?" is a bill question, not a task question.
 _MONEY_NOUN = re.compile(r"\b(?:bill|bills|card|payment|emi|invoice|rent|fee|amount|balance)\b",
                          re.I)
@@ -537,7 +557,8 @@ def _next_context(resolved: dict, intent: str | None, prior: dict | None, turn: 
 
 
 def analyse(db: Session, user, message: str, today: date | None = None,
-            context: dict | None = None, turn: int | None = None) -> dict:
+            context: dict | None = None, turn: int | None = None,
+            timezone_name: str | None = None) -> dict:
     """Return {"intent", "facts", "context"} — facts is None when no query applies."""
     today = today or date.today()
     text = normalise(message)
@@ -558,6 +579,22 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     # A change of records runs no query and leaves the analytics thread alone.
     if _is_write_request(text):
         return done(None, {}, None)
+
+    # Completion history and progress come before the open-task intents: "what
+    # did I complete today?" is about finished work, not what is due, and the
+    # period is resolved here rather than guessed by the model.
+    if _COMPLETED_CUE.search(text) or _PROGRESS_CUE.search(text):
+        period = task_intel.history_period(message, today)
+        if _PROGRESS_CUE.search(text):
+            facts = task_intel.task_progress(db, user, period=period or "month", today=today,
+                                             timezone_name=timezone_name)
+            result = done("tasks_progress", {"period": facts["period"]}, facts)
+        else:
+            facts = task_intel.completed_tasks(db, user, period=period or "recent", today=today,
+                                               timezone_name=timezone_name)
+            result = done("tasks_completed", {"period": facts["period"]}, facts)
+        result["context"] = context if isinstance(context, dict) else None
+        return result
 
     # Attention is asked before any date window: "which tasks should I focus
     # on?" names no date, and "what am I neglecting?" is a ranking, not a

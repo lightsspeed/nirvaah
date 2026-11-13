@@ -178,7 +178,8 @@ def _facts_block(analysis: dict) -> str:
 
 def _nodes(db: Session, user, turn: int, prefer: str = "",
            conversation_id: str = "", today: date | None = None,
-           progress: dict | None = None) -> dict[str, Callable[[ChatState], dict]]:
+           progress: dict | None = None,
+           timezone_name: str | None = None) -> dict[str, Callable[[ChatState], dict]]:
     # Ground truth about this turn, kept outside the graph state: when invoke()
     # raises we still have to know which node ran and which action was in flight.
     progress = progress if progress is not None else {}
@@ -204,7 +205,8 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         thread_context = state.get("chat_context") or None
         with obs.timed("plan"):
             analysis = planner.analyse(db, user, message, today=business_day,
-                                       context=thread_context, turn=turn)
+                                       context=thread_context, turn=turn,
+                                       timezone_name=timezone_name)
         data_range = planner.available_range(db, user)
         current_focus = focus_mod.get(db, user, conversation_id) if conversation_id else None
 
@@ -577,6 +579,7 @@ def run_turn(
     prefer: str = "",
     today: date | None = None,
     chat_context: dict | None = None,
+    timezone_name: str | None = None,
 ) -> dict:
     """Run one turn of a conversation and return the reply plus what changed.
 
@@ -592,7 +595,7 @@ def run_turn(
                       "reply": "", "actions": [], "act_started": False,
                       "in_flight": "", "results": [], "analytics": {}}
     nodes = _nodes(db, user, turn, prefer, conversation_id=conversation_id, today=today,
-                   progress=progress)
+                   progress=progress, timezone_name=timezone_name)
     payload: ChatState = {
         "message": message,
         "history": history[-HISTORY_LIMIT:],

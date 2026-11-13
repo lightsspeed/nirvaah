@@ -35,6 +35,7 @@ from decimal import Decimal
 from ..money import ZERO, MoneyError, require_money, to_money
 from ..timeutil import utcnow
 from . import obs
+from . import tasks as task_intel
 from .credentials import credential_kind, refusal as credential_refusal
 from . import resolve as resolver
 from .fields import as_plain, date_value, inr, month, num, tags, text
@@ -485,6 +486,9 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
             row.id = pk
         for key, value in fields.items():
             setattr(row, key, value)
+        if kind == "task":
+            # A task created already done still gets one completion stamp.
+            task_intel.set_done(row, bool(fields.get("done", False)), was=False)
         if hasattr(row, "updated_at"):
             row.updated_at = utcnow()
         db.add(row)
@@ -593,8 +597,13 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
                        error=f"Nothing to change on that {spec.label}.")
 
     before = {key: as_plain(getattr(row, key, None)) for key in fields}
+    was_done = bool(getattr(row, "done", False)) if kind == "task" else None
     for key, value in fields.items():
         setattr(row, key, value)
+    if kind == "task" and "done" in fields:
+        # One completion rule for every path: stamp on the transition to done,
+        # keep the original stamp on a repeat, clear it on reopen.
+        task_intel.set_done(row, bool(fields["done"]), was=was_done)
     if hasattr(row, "updated_at"):
         row.updated_at = utcnow()
 

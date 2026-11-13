@@ -31,6 +31,25 @@ from .timeutil import DEFAULT_TIMEZONE, resolve_timezone, today_for_timezone
 TIMEZONE_HEADER = "X-User-Timezone"
 
 
+def user_timezone(x_user_timezone: str | None = Header(default=None,
+                                                      alias=TIMEZONE_HEADER)) -> str | None:
+    """The validated IANA name the caller sent, or None when they sent nothing.
+
+    `user_today` answers "which day is it"; timestamps need the zone itself, so
+    a local midnight can be turned into the UTC instant the column stores.
+    """
+    name = (x_user_timezone or "").strip()
+    if not name:
+        return None
+    if resolve_timezone(name) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown timezone {name!r}. Send an IANA name such as 'Asia/Kolkata', "
+            f"or omit {TIMEZONE_HEADER} for {DEFAULT_TIMEZONE}.",
+        )
+    return name
+
+
 def user_today(x_user_timezone: str | None = Header(default=None, alias=TIMEZONE_HEADER)) -> date:
     """Today's date in the caller's timezone; UTC when the header is absent."""
     name = (x_user_timezone or "").strip()

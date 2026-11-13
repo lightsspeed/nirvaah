@@ -20,7 +20,7 @@ only where they are.
 """
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -104,6 +104,27 @@ def today_for_timezone(timezone_name: str | None) -> date:
             log.warning("unknown timezone %r; falling back to %s", timezone_name, DEFAULT_TIMEZONE)
         zone = ZoneInfo(DEFAULT_TIMEZONE)
     return _utc_now().astimezone(zone).date()
+
+
+def local_day_bounds(day: date, timezone_name: str | None = None) -> tuple[datetime, datetime]:
+    """The UTC instants that bracket one *local* calendar day: [start, end).
+
+    Stored timestamps are naive UTC, but "today", "yesterday" and "this week" are
+    the user's dates. A local midnight is not a UTC midnight (IST midnight is
+    18:30 UTC the previous day), so a date filter on a timestamp column has to be
+    converted once, here, rather than guessed at in a query.
+    """
+    zone = resolve_timezone(timezone_name) or ZoneInfo(DEFAULT_TIMEZONE)
+    start = datetime.combine(day, time.min, tzinfo=zone)
+    end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=zone)
+    return (start.astimezone(UTC).replace(tzinfo=None),
+            end.astimezone(UTC).replace(tzinfo=None))
+
+
+def local_range_bounds(start: date, end: date,
+                       timezone_name: str | None = None) -> tuple[datetime, datetime]:
+    """UTC instants for a local date range, inclusive of both ends."""
+    return local_day_bounds(start, timezone_name)[0], local_day_bounds(end, timezone_name)[1]
 
 
 def iso_utc(value: datetime | None) -> str | None:

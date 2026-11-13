@@ -20,7 +20,7 @@ from .credentials import credential_kind, refusal as credential_refusal
 from ..database import get_db
 from ..security import get_current_user
 from ..timeutil import iso_utc
-from ..tz import user_today
+from ..tz import user_timezone, user_today
 from . import graph, providers
 
 router = APIRouter(prefix="/api/chat", tags=["assistant"])
@@ -200,7 +200,8 @@ def list_messages(conversation_id: str, db: Session = Depends(get_db), user=Depe
 
 @router.post("/conversations/{conversation_id}/messages")
 def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(get_db),
-                 user=Depends(get_current_user), today: date = Depends(user_today)):
+                 user=Depends(get_current_user), today: date = Depends(user_today),
+                 timezone_name: str | None = Depends(user_timezone)):
     conversation = _conversation(db, user, conversation_id)
     text = (data.message or "").strip()
     if not text:
