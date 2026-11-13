@@ -109,6 +109,31 @@ def _memories(db: Session, user) -> list[str]:
     return [row.fact for row in reversed(rows)]
 
 
+def _fit_facts(facts: dict, limit: int) -> dict:
+    """Trim rows — never characters — until the facts fit the prompt budget.
+
+    Slicing the serialised JSON cuts a record in half and produces invalid JSON,
+    which the model then misreads. Dropping whole rows keeps every record intact
+    and makes ``shown``/``truncated`` tell the truth.
+    """
+    def size(payload) -> int:
+        return len(json.dumps(payload, default=str))
+
+    if size(facts) <= limit:
+        return facts
+    key = next((name for name in ("transactions", "items") if isinstance(facts.get(name), list)), None)
+    if key is None:
+        return facts
+    rows = list(facts[key])
+    trimmed = {**facts}
+    while rows and size({**trimmed, key: rows}) > limit:
+        rows.pop()
+    trimmed[key] = rows
+    trimmed["shown"] = len(rows)
+    trimmed["truncated"] = True
+    return trimmed
+
+
 def _facts_block(analysis: dict) -> str:
     """The verified analytics for this question, as the model sees them."""
     intent = analysis.get("intent")
@@ -123,10 +148,14 @@ def _facts_block(analysis: dict) -> str:
             "no_data": "There are no transactions in that range. Say the range is empty; never say zero.",
             "no_data_for_category": "That category has no spending in that range. Say exactly that.",
         }.get(status, "That range could not be read. Say so plainly; never invent a figure.")
+        payload = _fit_facts(facts, 2500)
         return (f"{header}\nSTATUS: {status}\n{instruction}\nFACTS: "
-                f"{json.dumps(facts, default=str)[:2500]}")
+                f"{json.dumps(payload, default=str)[:2500]}")
+    # 5700 fits a full LIST_LIMIT of records (38 April groceries is ~4.9k) and
+    # still leaves most of an 8k-token context for the conversation and reply.
+    payload = _fit_facts(facts, 5700)
     return (f"{header}\nThese numbers are computed from the database. Quote them exactly; "
-            f"do not recompute or round differently.\nFACTS: {json.dumps(facts, default=str)[:4000]}")
+            f"do not recompute or round differently.\nFACTS: {json.dumps(payload, default=str)[:5700]}")
 
 
 def _nodes(db: Session, user, turn: int, prefer: str = "",

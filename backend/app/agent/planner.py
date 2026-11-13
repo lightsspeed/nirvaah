@@ -27,6 +27,29 @@ MONTH_NAMES = {
 }
 
 _MONTH_RE = re.compile(r"\b(" + "|".join(sorted(MONTH_NAMES, key=len, reverse=True)) + r")\b", re.I)
+# "List the grocery spends" asks for the records; "how much did I spend on
+# groceries" asks for a figure. These two vocabularies decide which one it is.
+_LIST_CUES = re.compile(
+    r"\b(list|show|display|detail|details|breakdown|each|every|give me|which transactions|what are)\b",
+    re.I,
+)
+_SUMMARY_CUES = re.compile(
+    r"\b(how much|how many|average|avg|total|totals|highest|lowest|most|least|max|min|maximum|"
+    r"minimum|biggest|largest|top|compare|compared|versus|vs|trend|percentage|percent|rate|budget|"
+    r"remaining)\b",
+    re.I,
+)
+_LIST_NOUN = r"(?:transactions?|spends?|spending|expenses?|purchases?|payments?|bills?)"
+_LIST_NOUN_RE = re.compile(r"\b" + _LIST_NOUN + r"\b", re.I)
+# The single word that names what is being listed: "grocery spends", "restaurant
+# transactions", "grocery spending". Multi-word categories come from the pool.
+_LIST_PHRASE_RE = re.compile(r"\b([a-z][a-z'&-]{2,})\s+" + _LIST_NOUN + r"\b", re.I)
+_STOPWORDS = {
+    "all", "any", "my", "our", "the", "these", "those", "this", "that", "last", "next",
+    "recent", "every", "each", "of", "and", "down", "me", "give", "show", "list", "display",
+    "monthly", "total", "income", "expense", "expenses", "spend", "spends", "spending",
+}
+LIST_LIMIT = 40
 _YEAR_RE = re.compile(r"\b(20\d{2})\b")
 _LAST_N_RE = re.compile(r"\blast\s+(\d{1,2})\s+months?\b", re.I)
 
@@ -75,6 +98,28 @@ def _months_back(message: str) -> int | None:
     return None
 
 
+def _singular(token: str) -> str:
+    """A crude, predictable singular: groceries -> grocery, bills -> bill."""
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith(("ses", "xes", "zes", "ches", "shes")):
+        return token[:-2]
+    if token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _listing_phrase(text: str) -> str | None:
+    """The noun being listed, when it is not one of the user's categories."""
+    match = _LIST_PHRASE_RE.search(text)
+    if not match:
+        return None
+    phrase = match.group(1).strip(" .?!,'")
+    if not phrase or phrase in _STOPWORDS or re.search(r"\d", phrase):
+        return None
+    return phrase
+
+
 def _wants_extremes(text: str) -> bool:
     return bool(re.search(r"\b(highest|maximum|max|most|top|biggest|largest)\b", text)) or bool(
         re.search(r"\b(lowest|minimum|min|least|smallest)\b", text))
@@ -104,10 +149,10 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
     # A category only counts when it is one of this user's real categories.
     mentioned = [c for c in pool if normalise(c) and normalise(c) in text]
     if not mentioned:
-        # plural/partial forms: "office eats" vs "office eat"
+        # plural/partial forms: "grocery" for Groceries, "office eat" for Office eats
         for candidate in pool:
             tokens = [t for t in normalise(candidate).split() if len(t) >= 4]
-            if tokens and all(t.rstrip("s") in text for t in tokens):
+            if tokens and all(t in text or _singular(t) in text for t in tokens):
                 mentioned.append(candidate)
 
     # A spend question about something that is not in the ledger at all.
@@ -128,6 +173,38 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
                         "message": (f"You have no category or transaction called \"{phrase}\" — I cannot give a figure for it."),
                     },
                 }
+
+    # A listing request is answered with the records, not with a total. It is
+    # checked before the category+month aggregate so "give me the details of
+    # grocery spending in April" is not flattened into one number.
+    if _LIST_CUES.search(text) and not _SUMMARY_CUES.search(text) \
+            and (mentioned or month or _LIST_NOUN_RE.search(text)):
+        category = mentioned[0] if mentioned else None
+        phrase = None if category else _listing_phrase(text)
+        kind = "income" if re.search(r"\bincome\b|\bsalary\b|\bearned\b|\breceived\b", text) else "expense"
+        found = analytics.search(db, user, category=category, text=phrase, month=month,
+                                 kind=kind, limit=LIST_LIMIT)
+        rows = found.get("transactions") or []
+        # Search's own totals stay authoritative; the model only re-states them.
+        facts = {
+            "status": found.get("status"),
+            "month": month,
+            "category": category,
+            "text": phrase,
+            "kind": kind,
+            "count": found.get("count", 0),
+            "total": found.get("total", 0.0),
+            "shown": len(rows),
+            "truncated": len(rows) < int(found.get("count") or 0),
+            "transactions": [
+                {"date": row["date"], "amount": row["amount"], "category": row["category"],
+                 "description": row["description"], "payment_method": row["paid_with"]}
+                for row in rows
+            ],
+        }
+        return {"intent": "list_transactions",
+                "query": {"category": category, "text": phrase, "month": month, "kind": kind},
+                "facts": facts}
 
     try:
         if mentioned and month:

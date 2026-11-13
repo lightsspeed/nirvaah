@@ -367,6 +367,7 @@ Rules:
 22. When a VERIFIED ANALYTICS block is present it is the only source for those figures: quote its numbers exactly, name the month, and never recalculate or blend it with the snapshot. If its STATUS is unknown_category, no_data or no_data_for_category, say plainly that you cannot see that data — never answer zero.
 23. CURRENT FOCUS names the record the conversation is about. "It", "that", "the same one", "make it high priority", "move it to Sunday" refer to it. If the new message names another record, ignore the focus and use the name.
 24. Matching: act only on a record whose name matches what the user said. If several records match, ask which one and return no actions. If none match, say you could not find it — never pick the closest row.
+25. When FACTS contains a "transactions" list, the user asked for the records themselves: list them, one per line, as "<date> — <description or category> — ₹<amount>". "total" is the database total for the whole filter — never add the rows up. If "truncated" is true, say the list shows "shown" of "count" records; if it is false, the list is complete.
 
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
