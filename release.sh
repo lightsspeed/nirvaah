@@ -20,7 +20,16 @@ MINOR="${VERSION%.*}"
 SERVICES=(backend frontend backup)
 echo "▶ Nirvaah ${VERSION}  →  docker.io/${NAMESPACE}/nirvaah-*"
 
-APP_VERSION="$VERSION" DOCKER_NAMESPACE="$NAMESPACE" docker compose build "${SERVICES[@]}"
+# Truthful build metadata: the revision actually checked out here, and the moment
+# the build ran. If this is not a git checkout, record "unknown" rather than a
+# plausible-looking value.
+GIT_REVISION="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "  revision ${GIT_REVISION}"
+
+APP_VERSION="$VERSION" DOCKER_NAMESPACE="$NAMESPACE" \
+    GIT_REVISION="$GIT_REVISION" BUILD_DATE="$BUILD_DATE" \
+    docker compose build "${SERVICES[@]}"
 
 for svc in "${SERVICES[@]}"; do
     base="${NAMESPACE}/nirvaah-${svc}"

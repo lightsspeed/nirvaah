@@ -1,23 +1,92 @@
 import json
+import math
 import os
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from calendar import monthrange
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from .database import Base, engine, get_db
 from . import models, schemas
+from . import money
+from .timeutil import iso_utc, utcnow
+from .tz import user_today
 from .security import hash_password, verify_password, create_access_token, get_current_user
 from .agent.api import router as assistant_router
+from .agent.tasks import set_done
 
 Base.metadata.create_all(bind=engine)
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 app = FastAPI(title="Nirvaah API", version=APP_VERSION)
 app.include_router(assistant_router)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+# Fields whose *value* must never be echoed back in a validation error.
+SECRET_FIELDS = frozenset({
+    "password", "current_password", "new_password", "confirm_password",
+    "token", "access_token", "refresh_token", "id_token", "api_token",
+    "secret", "client_secret", "api_key", "authorization",
+})
+
+
+def _scrub(value):
+    """Recursively replace the value of every secret key in a mapping."""
+    if isinstance(value, dict):
+        return {key: ("[redacted]" if str(key).lower() in SECRET_FIELDS else _scrub(item))
+                for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub(item) for item in value]
+    return value
+
+
+def _redact(errors):
+    """Remove a secret's value from a validation error before it leaves the app.
+
+    Pydantic quotes the offending input in ``detail[].input``; for a password or a
+    token that would put the secret in the response, and in any log that records
+    the body. A "field required" error quotes the *whole* body, so a mapping input
+    is scrubbed key by key as well. Location, type and message are kept, so the
+    client still learns which field failed and why.
+    """
+    for error in errors:
+        parts = error.get("loc") or ()
+        if any(str(part).lower() in SECRET_FIELDS for part in parts):
+            if "input" in error:
+                error["input"] = "[redacted]"
+        elif "input" in error:
+            error["input"] = _scrub(error["input"])
+    return errors
+
+
+def _json_safe(value):
+    """A JSON-encodable copy of a payload, with non-finite floats written as text.
+
+    A rejected request is echoed back in ``detail[].input``. Python parses ``NaN``
+    and ``Infinity`` in a JSON body, but refuses to encode them again, which turned
+    a correct 422 into a 500. The amount was already refused; this only makes the
+    refusal serialisable.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request, exc):
+    detail = _json_safe(_redact(jsonable_encoder(exc.errors())))
+    return JSONResponse(status_code=422, content={"detail": detail})
+
 
 def owned(db, model, item_id, user):
     item = db.query(model).filter(model.id == item_id, model.user_id == user.id).first()
@@ -53,6 +122,35 @@ def login(data: schemas.LoginIn, db: Session = Depends(get_db)):
 def me(user=Depends(get_current_user)):
     return {"id": user.id, "name": user.name, "email": user.email, "currency": user.currency}
 
+def month_bounds(month: str | None) -> tuple[date, date] | None:
+    """First day of ``month`` (YYYY-MM) and the first day of the month after it.
+
+    Month filters use ``txn_date >= start AND txn_date < end`` so PostgreSQL can
+    use the (user_id, txn_date) index. ``to_char(txn_date, 'YYYY-MM') = month``
+    wrapped the column in a function and forced a scan of every row.
+
+    Returns None for anything that is not a plain YYYY-MM month, which keeps the
+    old "matches nothing" behaviour for a malformed value.
+    """
+    if not month or len(month) != 7 or month[4] != "-":
+        return None
+    try:
+        year, mon = int(month[:4]), int(month[5:])
+        start = date(year, mon, 1)
+    except ValueError:
+        return None
+    return start, date(year + (mon == 12), mon % 12 + 1, 1)
+
+
+def month_conditions(month: str | None) -> tuple:
+    """Filter conditions for one month: inclusive start, exclusive next month."""
+    bounds = month_bounds(month)
+    if bounds is None:
+        return (models.Transaction.id.is_(None),)
+    start, end = bounds
+    return (models.Transaction.txn_date >= start, models.Transaction.txn_date < end)
+
+
 def parse_date_param(d_str: str | None) -> date | None:
     if not d_str:
         return None
@@ -67,7 +165,8 @@ def dashboard(
     start_date: str | None = None,
     end_date: str | None = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user=Depends(get_current_user),
+    today: date = Depends(user_today),
 ):
     q = db.query(models.Transaction).filter_by(user_id=user.id)
     s_d = parse_date_param(start_date)
@@ -79,31 +178,25 @@ def dashboard(
     elif month and month.lower() == "all":
         # "all" - get all transactions for this user across all time
         period_label = "All Time"
-        budget_month = date.today().strftime("%Y-%m")
+        budget_month = today.strftime("%Y-%m")
     elif month:
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == month)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == month)
+        q = q.filter(*month_conditions(month))
         period_label = month
         budget_month = month
     else:
         # Default: current month stats
-        cur_m = date.today().strftime("%Y-%m")
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == cur_m)
+        cur_m = today.strftime("%Y-%m")
+        q = q.filter(*month_conditions(cur_m))
         period_label = cur_m
         budget_month = cur_m
 
     txns = q.all()
-    income = sum(t.amount for t in txns if t.kind == "income")
-    expenses = sum(t.amount for t in txns if t.kind == "expense")
+    income = money.total(t.amount for t in txns if t.kind == "income")
+    expenses = money.total(t.amount for t in txns if t.kind == "expense")
     by_category = {}
     for t in txns:
         if t.kind == "expense":
-            by_category[t.category] = by_category.get(t.category, 0) + t.amount
+            by_category[t.category] = by_category.get(t.category, money.ZERO) + t.amount
     investments = db.query(models.Investment).filter_by(user_id=user.id).all()
     liabilities = db.query(models.Liability).filter_by(user_id=user.id).all()
     budget_rows = db.query(models.Budget).filter_by(user_id=user.id, month=budget_month).all()
@@ -113,26 +206,29 @@ def dashboard(
     budgets = []
     for b in budget_rows:
         spent = by_category.get(b.category, 0)
-        budgets.append({"id": b.id, "category": b.category, "monthly_limit": b.monthly_limit, "spent": spent, "remaining": b.monthly_limit-spent})
+        budgets.append({"id": b.id, "category": b.category, "monthly_limit": money.number(b.monthly_limit),
+                        "spent": money.number(spent), "remaining": money.number(b.monthly_limit - spent)})
     return {
         "period": period_label,
         "month": month or budget_month,
-        "income": round(income, 2),
-        "expenses": round(expenses, 2),
-        "savings": round(income - expenses, 2),
-        "savings_rate": round(((income-expenses)/income)*100, 1) if income else 0,
-        "investment_value": sum(i.current_value for i in investments),
-        "investment_cost": sum(i.invested_amount for i in investments),
-        "liabilities": sum(l.outstanding_amount for l in liabilities),
-        "net_worth": sum(i.current_value for i in investments) - sum(l.outstanding_amount for l in liabilities),
-        "category_expenses": [{"category": k, "amount": round(v, 2)} for k, v in sorted(by_category.items(), key=lambda x: x[1], reverse=True)],
+        "income": money.number(income),
+        "expenses": money.number(expenses),
+        "savings": money.number(income - expenses),
+        "savings_rate": round(float((income - expenses) / income * 100), 1) if income else 0,
+        "investment_value": money.number(money.total(i.current_value for i in investments)),
+        "investment_cost": money.number(money.total(i.invested_amount for i in investments)),
+        "liabilities": money.number(money.total(l.outstanding_amount for l in liabilities)),
+        "net_worth": money.number(money.total(i.current_value for i in investments)
+                                   - money.total(l.outstanding_amount for l in liabilities)),
+        "category_expenses": [{"category": k, "amount": money.number(v)}
+                              for k, v in sorted(by_category.items(), key=lambda x: x[1], reverse=True)],
         "budgets": budgets,
         "recent_transactions": [txn_dict(t) for t in sorted(txns, key=lambda x: x.txn_date, reverse=True)[:10]],
         "total_txns": len(txns),
     }
 
 def txn_dict(t):
-    return {"id":t.id,"kind":t.kind,"amount":t.amount,"category":t.category,"description":t.description,"payment_method":t.payment_method,"txn_date":t.txn_date.isoformat()}
+    return {"id":t.id,"kind":t.kind,"amount":money.number(t.amount),"category":t.category,"description":t.description,"payment_method":t.payment_method,"txn_date":t.txn_date.isoformat()}
 
 @app.get("/api/transactions")
 def list_transactions(
@@ -143,7 +239,8 @@ def list_transactions(
     category: str | None = None,
     search: str | None = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user=Depends(get_current_user),
+    today: date = Depends(user_today),
 ):
     q = db.query(models.Transaction).filter_by(user_id=user.id)
     s_d = parse_date_param(start_date)
@@ -153,17 +250,10 @@ def list_transactions(
     elif month and month.lower() == "all":
         pass  # All time
     elif month:
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == month)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == month)
+        q = q.filter(*month_conditions(month))
     else:
         # Default: current month
-        cur_m = date.today().strftime("%Y-%m")
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == cur_m)
+        q = q.filter(*month_conditions(today.strftime("%Y-%m")))
     
     if kind and kind.lower() in ("income", "expense"):
         q = q.filter(models.Transaction.kind == kind.lower())
@@ -192,11 +282,9 @@ def update_transaction(item_id: int, data: schemas.TransactionIn, db: Session = 
 def delete_transaction(item_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     item=owned(db,models.Transaction,item_id,user); db.delete(item); db.commit(); return {"deleted":True}
 
-def crud_routes():
-    pass
-
 @app.get("/api/budgets")
-def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(get_current_user)):
+def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(get_current_user),
+            today: date = Depends(user_today)):
     q = db.query(models.Budget).filter_by(user_id=user.id)
     if month and month.lower() != "all":
         month_budgets = q.filter(models.Budget.month == month).order_by(models.Budget.month.desc()).all()
@@ -205,7 +293,7 @@ def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(
         budget_items = q.order_by(models.Budget.month.desc()).all()
     res = []
     for x in budget_items:
-        m = month if (month and month.lower() != "all") else (x.month or date.today().strftime("%Y-%m"))
+        m = month if (month and month.lower() != "all") else (x.month or today.strftime("%Y-%m"))
         if engine.dialect.name == "sqlite":
             spent = db.query(func.coalesce(func.sum(models.Transaction.amount), 0)).filter(
                 models.Transaction.user_id == user.id,
@@ -220,20 +308,20 @@ def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(
                 models.Transaction.category == x.category,
                 func.to_char(models.Transaction.txn_date, "YYYY-MM") == m
             ).scalar()
-        spent = round(float(spent), 2)
+        spent = money.to_money(spent, default=money.ZERO)
         res.append({
             "id": x.id,
             "category": x.category,
-            "monthly_limit": x.monthly_limit,
+            "monthly_limit": money.number(x.monthly_limit),
             "month": x.month or m,
-            "spent": spent,
-            "remaining": round(x.monthly_limit - spent, 2)
+            "spent": money.number(spent),
+            "remaining": money.number(x.monthly_limit - spent)
         })
     return res
 
 @app.post("/api/budgets")
 def add_budget(data: schemas.BudgetIn, db: Session=Depends(get_db), user=Depends(get_current_user)):
-    item=models.Budget(user_id=user.id,**data.model_dump()); db.add(item); db.commit(); db.refresh(item); return {"id":item.id,"category":item.category,"monthly_limit":item.monthly_limit,"month":item.month}
+    item=models.Budget(user_id=user.id,**data.model_dump()); db.add(item); db.commit(); db.refresh(item); return {"id":item.id,"category":item.category,"monthly_limit":money.number(item.monthly_limit),"month":item.month}
 
 @app.delete("/api/budgets/{item_id}")
 def delete_budget(item_id:int, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -241,7 +329,7 @@ def delete_budget(item_id:int, db:Session=Depends(get_db), user=Depends(get_curr
 
 @app.get("/api/goals")
 def goals(db:Session=Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":x.id,"name":x.name,"target_amount":x.target_amount,"saved_amount":x.saved_amount,"target_date":x.target_date.isoformat() if x.target_date else None} for x in db.query(models.Goal).filter_by(user_id=user.id).all()]
+    return [{"id":x.id,"name":x.name,"target_amount":money.number(x.target_amount),"saved_amount":money.number(x.saved_amount),"target_date":x.target_date.isoformat() if x.target_date else None} for x in db.query(models.Goal).filter_by(user_id=user.id).all()]
 
 @app.post("/api/goals")
 def add_goal(data:schemas.GoalIn, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -253,7 +341,7 @@ def delete_goal(item_id:int, db:Session=Depends(get_db), user=Depends(get_curren
 
 @app.get("/api/investments")
 def investments(db:Session=Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":x.id,"name":x.name,"asset_type":x.asset_type,"invested_amount":x.invested_amount,"current_value":x.current_value,"notes":x.notes} for x in db.query(models.Investment).filter_by(user_id=user.id).all()]
+    return [{"id":x.id,"name":x.name,"asset_type":x.asset_type,"invested_amount":money.number(x.invested_amount),"current_value":money.number(x.current_value),"notes":x.notes} for x in db.query(models.Investment).filter_by(user_id=user.id).all()]
 
 @app.post("/api/investments")
 def add_investment(data:schemas.InvestmentIn, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -265,7 +353,7 @@ def delete_investment(item_id:int, db:Session=Depends(get_db), user=Depends(get_
 
 @app.get("/api/liabilities")
 def liabilities(db:Session=Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":x.id,"name":x.name,"liability_type":x.liability_type,"outstanding_amount":x.outstanding_amount,"monthly_emi":x.monthly_emi,"notes":x.notes} for x in db.query(models.Liability).filter_by(user_id=user.id).all()]
+    return [{"id":x.id,"name":x.name,"liability_type":x.liability_type,"outstanding_amount":money.number(x.outstanding_amount),"monthly_emi":money.number(x.monthly_emi),"notes":x.notes} for x in db.query(models.Liability).filter_by(user_id=user.id).all()]
 
 @app.post("/api/liabilities")
 def add_liability(data:schemas.LiabilityIn, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -277,9 +365,10 @@ def delete_liability(item_id:int, db:Session=Depends(get_db), user=Depends(get_c
 
 # ── Cashflow: last N months of income vs expense ─────────────────────────────
 @app.get("/api/cashflow")
-def cashflow(months: int = Query(default=6, ge=1, le=24), db: Session = Depends(get_db), user=Depends(get_current_user)):
+def cashflow(months: int = Query(default=6, ge=1, le=24), db: Session = Depends(get_db),
+             user=Depends(get_current_user), today: date = Depends(user_today)):
     import calendar as cal_mod
-    today_d = date.today()
+    today_d = today
     result = []
     for i in range(months - 1, -1, -1):
         y = today_d.year
@@ -298,8 +387,8 @@ def cashflow(months: int = Query(default=6, ge=1, le=24), db: Session = Depends(
                 models.Transaction.user_id == user.id,
                 func.to_char(models.Transaction.txn_date, "YYYY-MM") == month_str
             ).all()
-        inc = round(sum(t.amount for t in txns if t.kind == "income"), 2)
-        exp = round(sum(t.amount for t in txns if t.kind == "expense"), 2)
+        inc = money.number(money.total(t.amount for t in txns if t.kind == "income"))
+        exp = money.number(money.total(t.amount for t in txns if t.kind == "expense"))
         label = f"{cal_mod.month_abbr[m]} '{str(y)[2:]}"
         result.append({"month": month_str, "label": label, "income": inc, "expense": exp})
     return result
@@ -312,7 +401,8 @@ def analytics(
     start_date: str = Query(default=None),
     end_date: str = Query(default=None),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user=Depends(get_current_user),
+    today: date = Depends(user_today),
 ):
     q = db.query(models.Transaction).filter_by(user_id=user.id)
     s_d = parse_date_param(start_date)
@@ -324,15 +414,16 @@ def analytics(
     elif from_month and from_month.lower() != "all":
         if not to_month:
             to_month = from_month
-        if engine.dialect.name == "sqlite":
-            q = q.filter(
-                func.strftime("%Y-%m", models.Transaction.txn_date) >= from_month,
-                func.strftime("%Y-%m", models.Transaction.txn_date) <= to_month,
-            )
+        start_bounds = month_bounds(from_month)
+        end_bounds = month_bounds(to_month)
+        if start_bounds is None or end_bounds is None:
+            q = q.filter(models.Transaction.id.is_(None))
         else:
+            # Whole months: from the 1st of `from` up to (not including) the 1st
+            # of the month after `to`.
             q = q.filter(
-                func.to_char(models.Transaction.txn_date, "YYYY-MM") >= from_month,
-                func.to_char(models.Transaction.txn_date, "YYYY-MM") <= to_month,
+                models.Transaction.txn_date >= start_bounds[0],
+                models.Transaction.txn_date < end_bounds[1],
             )
         from_label = from_month
         to_label = to_month
@@ -341,11 +432,8 @@ def analytics(
         to_label = "Present"
     else:
         # Default: current month
-        cur_m = date.today().strftime("%Y-%m")
-        if engine.dialect.name == "sqlite":
-            q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
-        else:
-            q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == cur_m)
+        cur_m = today.strftime("%Y-%m")
+        q = q.filter(*month_conditions(cur_m))
         from_label = cur_m
         to_label = cur_m
 
@@ -366,27 +454,27 @@ def analytics(
         by_payment_cnt[pm] = by_payment_cnt.get(pm, 0) + 1
         if t.kind == "expense":
             exp_txns_count += 1
-            by_cat[t.category] = by_cat.get(t.category, 0) + t.amount
+            by_cat[t.category] = by_cat.get(t.category, money.ZERO) + t.amount
             by_cat_cnt[t.category] = by_cat_cnt.get(t.category, 0) + 1
-            by_payment_exp[pm] = by_payment_exp.get(pm, 0) + t.amount
+            by_payment_exp[pm] = by_payment_exp.get(pm, money.ZERO) + t.amount
             by_payment_exp_cnt[pm] = by_payment_exp_cnt.get(pm, 0) + 1
         elif t.kind == "income":
             inc_txns_count += 1
-            by_payment_inc[pm] = by_payment_inc.get(pm, 0) + t.amount
+            by_payment_inc[pm] = by_payment_inc.get(pm, money.ZERO) + t.amount
             by_payment_inc_cnt[pm] = by_payment_inc_cnt.get(pm, 0) + 1
 
-    total_exp = sum(by_cat.values())
-    total_inc = sum(t.amount for t in txns if t.kind == "income")
-    avg_expense_per_txn = round(total_exp / exp_txns_count, 2) if exp_txns_count else 0
-    avg_income_per_txn = round(total_inc / inc_txns_count, 2) if inc_txns_count else 0
+    total_exp = money.total(by_cat.values())
+    total_inc = money.total(t.amount for t in txns if t.kind == "income")
+    avg_expense_per_txn = money.number(total_exp / exp_txns_count) if exp_txns_count else 0
+    avg_income_per_txn = money.number(total_inc / inc_txns_count) if inc_txns_count else 0
 
     categories = [
         {
             "category": k,
-            "amount": round(v, 2),
+            "amount": money.number(v),
             "txns": by_cat_cnt.get(k, 0),
-            "avg": round(v / by_cat_cnt[k], 2) if by_cat_cnt.get(k, 0) else 0,
-            "pct": round(v / total_exp * 100, 1) if total_exp else 0,
+            "avg": money.number(v / by_cat_cnt[k]) if by_cat_cnt.get(k, 0) else 0,
+            "pct": round(float(v / total_exp * 100), 1) if total_exp else 0,
         }
         for k, v in sorted(by_cat.items(), key=lambda x: x[1], reverse=True)
     ]
@@ -395,16 +483,16 @@ def analytics(
     payment_breakdown = [
         {
             "payment_method": k,
-            "amount": round(by_payment_exp.get(k, 0), 2),
-            "income": round(by_payment_inc.get(k, 0), 2),
-            "net": round(by_payment_inc.get(k, 0) - by_payment_exp.get(k, 0), 2),
+            "amount": money.number(by_payment_exp.get(k, money.ZERO)),
+            "income": money.number(by_payment_inc.get(k, money.ZERO)),
+            "net": money.number(by_payment_inc.get(k, money.ZERO) - by_payment_exp.get(k, money.ZERO)),
             "txns": by_payment_cnt.get(k, 0),
             "exp_txns": by_payment_exp_cnt.get(k, 0),
             "inc_txns": by_payment_inc_cnt.get(k, 0),
-            "avg": round(by_payment_exp.get(k, 0) / by_payment_exp_cnt[k], 2) if by_payment_exp_cnt.get(k, 0) else 0,
-            "avg_income": round(by_payment_inc.get(k, 0) / by_payment_inc_cnt[k], 2) if by_payment_inc_cnt.get(k, 0) else 0,
-            "avg_overall": round((by_payment_exp.get(k, 0) + by_payment_inc.get(k, 0)) / by_payment_cnt[k], 2) if by_payment_cnt.get(k, 0) else 0,
-            "pct": round(by_payment_exp.get(k, 0) / total_exp * 100, 1) if total_exp else 0,
+            "avg": money.number(by_payment_exp.get(k, money.ZERO) / by_payment_exp_cnt[k]) if by_payment_exp_cnt.get(k, 0) else 0,
+            "avg_income": money.number(by_payment_inc.get(k, money.ZERO) / by_payment_inc_cnt[k]) if by_payment_inc_cnt.get(k, 0) else 0,
+            "avg_overall": money.number((by_payment_exp.get(k, money.ZERO) + by_payment_inc.get(k, money.ZERO)) / by_payment_cnt[k]) if by_payment_cnt.get(k, 0) else 0,
+            "pct": round(float(by_payment_exp.get(k, money.ZERO) / total_exp * 100), 1) if total_exp else 0,
         }
         for k in sorted(all_methods, key=lambda x: (by_payment_exp.get(x, 0), by_payment_cnt.get(x, 0)), reverse=True)
     ]
@@ -412,8 +500,8 @@ def analytics(
     return {
         "from": from_label,
         "to": to_label,
-        "total_income": round(total_inc, 2),
-        "total_expense": round(total_exp, 2),
+        "total_income": money.number(total_inc),
+        "total_expense": money.number(total_exp),
         "total_txns": len(txns),
         "exp_txns": exp_txns_count,
         "inc_txns": inc_txns_count,
@@ -473,20 +561,26 @@ def _from_tags(value):
 
 
 def _num(value):
+    """A nullable monetary value: quantised to paise, None when absent.
+
+    A journal entry may carry no amount at all; anything that is present must be a
+    real amount, so a value the column cannot hold is refused instead of being
+    dropped to NULL.
+    """
     if value in (None, "", False):
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+        return money.require_money(value, field="amount")
+    except money.MoneyError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def _note_out(n: models.Note):
     return {
         "id": n.id, "title": n.title, "body": n.body, "category": n.category,
         "tags": _from_tags(n.tags), "pinned": n.pinned, "archived": n.archived,
-        "createdAt": n.created_at.isoformat() if n.created_at else None,
-        "updatedAt": n.updated_at.isoformat() if n.updated_at else None,
+        "createdAt": iso_utc(n.created_at),
+        "updatedAt": iso_utc(n.updated_at),
     }
 
 
@@ -494,18 +588,18 @@ def _task_out(t: models.Task):
     return {
         "id": t.id, "text": t.text, "notes": t.notes, "done": t.done,
         "priority": t.priority, "category": t.category, "due": _iso(t.due),
-        "createdAt": t.created_at.isoformat() if t.created_at else None,
-        "updatedAt": t.updated_at.isoformat() if t.updated_at else None,
+        "createdAt": iso_utc(t.created_at),
+        "updatedAt": iso_utc(t.updated_at),
     }
 
 
 def _journal_out(e: models.JournalEntry):
     return {
         "id": e.id, "title": e.title, "description": e.description,
-        "category": e.category, "mood": e.mood, "amount": e.amount,
+        "category": e.category, "mood": e.mood, "amount": money.number(e.amount),
         "date": _iso(e.event_date), "tags": _from_tags(e.tags),
-        "createdAt": e.created_at.isoformat() if e.created_at else None,
-        "updatedAt": e.updated_at.isoformat() if e.updated_at else None,
+        "createdAt": iso_utc(e.created_at),
+        "updatedAt": iso_utc(e.updated_at),
     }
 
 
@@ -531,7 +625,8 @@ def _apply_task(row, data):
     if "notes" in data:
         row.notes = str(data["notes"])
     if "done" in data:
-        row.done = bool(data["done"])
+        # Same transition rule as the assistant: set once, cleared on reopen.
+        set_done(row, bool(data["done"]))
     if "priority" in data:
         row.priority = str(data["priority"])[:12]
     if "category" in data:
@@ -576,7 +671,7 @@ def upsert_note(payload: dict, db: Session = Depends(get_db), user=Depends(get_c
         row = models.Note(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
         db.add(row)
     _apply_note(row, payload)
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     db.commit(); db.refresh(row)
     return _note_out(row)
 
@@ -608,7 +703,7 @@ def upsert_task(payload: dict, db: Session = Depends(get_db), user=Depends(get_c
         row = models.Task(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
         db.add(row)
     _apply_task(row, payload)
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     db.commit(); db.refresh(row)
     return _task_out(row)
 
@@ -640,7 +735,7 @@ def upsert_journal(payload: dict, db: Session = Depends(get_db), user=Depends(ge
         row = models.JournalEntry(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
         db.add(row)
     _apply_journal(row, payload)
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     db.commit(); db.refresh(row)
     return _journal_out(row)
 

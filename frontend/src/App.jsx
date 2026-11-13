@@ -17,6 +17,8 @@ import {
 import GlobalSearch from './GlobalSearch';
 import BrandAiIcon from './BrandAiIcon';
 import AssistantPage from './AssistantPage';
+import { timezoneHeader } from './deviceTz';
+import { formatDateOnly, formatInstant } from './dates';
 import NotesPage from './life/NotesPage';
 import TasksPage from './life/TasksPage';
 import JournalPage from './life/JournalPage';
@@ -33,11 +35,15 @@ const money = n => {
     const value = Number(n || 0);
     return (Math.abs(value - Math.round(value)) > 0.004 ? MONEY_PAISE : MONEY_WHOLE).format(value);
 };
-const today = () => new Date().toISOString().slice(0, 10);
+// Calendar dates come from the device's own clock. `toISOString()` is UTC, so an
+// IST user between midnight and 05:30 got yesterday — exactly when a transaction
+// gets logged. Local getters only, the same convention as life/store.js.
+const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = () => isoDay(new Date());
 const yesterday = () => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
+    return isoDay(d);
 };
 const thisMonthStr = () => today().slice(0, 7);
 
@@ -60,20 +66,22 @@ const monthLabel = value => {
     return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 };
 
-const getCurrentMonthRange = () => {
-    const todayDate = new Date();
-    const curYear = todayDate.getFullYear();
-    const curMonth = todayDate.getMonth();
-    const mStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}`;
-    const lastDay = new Date(curYear, curMonth + 1, 0).getDate();
+// One local Date in, one internally consistent month range out: the day bounds,
+// the "YYYY-MM" key and the label all come from the same calendar month, so the
+// end date can never be an impossible day (the old code mixed a UTC month with a
+// local last-day and produced "2026-11-31").
+const monthRange = d => {
+    const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
     return {
-        preset: 'this_month',
         startDate: `${mStr}-01`,
         endDate: `${mStr}-${String(lastDay).padStart(2, '0')}`,
-        label: todayDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
+        label: d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
         month: mStr,
     };
 };
+
+const getCurrentMonthRange = () => ({ preset: 'this_month', ...monthRange(new Date()) });
 
 // Default categories and payment methods
 const DEFAULT_EXPENSE_CATS = [
@@ -773,15 +781,7 @@ function DateRangeFilter({ range, onChange, txRange }) {
                 month: 'all',
             });
         } else if (preset === 'this_month') {
-            const mStr = thisMonthStr();
-            const lastDay = new Date(curYear, curMonth + 1, 0).getDate();
-            onChange({
-                preset: 'this_month',
-                startDate: `${mStr}-01`,
-                endDate: `${mStr}-${String(lastDay).padStart(2, '0')}`,
-                label: new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
-                month: mStr,
-            });
+            onChange({ preset: 'this_month', ...monthRange(todayDate) });
         } else if (preset === 'last_month') {
             const prevDate = new Date(curYear, curMonth - 1, 1);
             const prevYear = prevDate.getFullYear();
@@ -1050,7 +1050,10 @@ export default function App() {
         const q = search.trim().toLowerCase();
         if (!q) return [];
         const has = (...vals) => vals.some(v => String(v ?? '').toLowerCase().includes(q));
-        const when = v => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '');
+        // Two different kinds of value: a timestamp is an instant (rendered in the
+        // browser's zone), a date is a calendar day that must not shift.
+        const when = v => formatDateOnly(v, { day: '2-digit', month: 'short' });
+        const whenStamp = v => formatInstant(v, { day: '2-digit', month: 'short' });
         const pageList = groups.flatMap(([, items]) => items);
 
         return [
@@ -1070,7 +1073,7 @@ export default function App() {
                     id: n.id,
                     title: n.title || 'Untitled note',
                     subtitle: n.category,
-                    meta: when(n.updatedAt || n.createdAt),
+                    meta: whenStamp(n.updatedAt || n.createdAt),
                 })),
             },
             {
@@ -1352,7 +1355,10 @@ export default function App() {
         return () => window.removeEventListener('keydown', handleEsc);
     }, [manageModal, selectedCategoryDetail]);
 
-    const api = useMemo(() => axios.create({ baseURL: API, headers: token ? { Authorization: `Bearer ${token}` } : {} }), [token]);
+    const api = useMemo(() => axios.create({
+        baseURL: API,
+        headers: token ? { Authorization: `Bearer ${token}`, ...timezoneHeader() } : timezoneHeader(),
+    }), [token]);
 
     const logout = () => {
         localStorage.removeItem('moneta_token');
@@ -1517,6 +1523,35 @@ export default function App() {
         }
     };
 
+    // Expense trend, date by date, across the selected period. Empty days are
+    // kept so the axis is continuous and a quiet week is visible as a gap.
+    const expenseByDay = useMemo(() => {
+        const start = range.startDate || txRange?.min_date;
+        const end = range.endDate || txRange?.max_date;
+        if (!start || !end || start > end) return [];
+        const byDay = new Map();
+        tx.forEach(t => {
+            if (t.kind !== 'expense') return;
+            const key = (t.txn_date || '').slice(0, 10);
+            if (!key || key < start || key > end) return;
+            byDay.set(key, (byDay.get(key) || 0) + Number(t.amount || 0));
+        });
+        const out = [];
+        const cursor = new Date(`${start}T00:00:00`);
+        const last = new Date(`${end}T00:00:00`);
+        for (let i = 0; cursor <= last && i < 800; i++) {
+            const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+            out.push({
+                date: key,
+                label: cursor.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+                shortLabel: cursor.toLocaleDateString('en-IN', { day: 'numeric' }),
+                expense: Math.round((byDay.get(key) || 0) * 100) / 100,
+            });
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        return out;
+    }, [tx, range.startDate, range.endDate, txRange]);
+
     // ── Auth View ───────────────────────────────────────────────────────────────
     if (!token) return (
         <div className="auth">
@@ -1551,34 +1586,6 @@ export default function App() {
 
     const data = d || { period: range.label, balance: 0, income: 0, expenses: 0, savings: 0, savings_rate: 0, investment_value: 0, liabilities: 0, net_worth: 0, category_expenses: [], budgets: [], recent_transactions: [], total_txns: 0 };
 
-    // Expense trend, date by date, across the selected period. Empty days are
-    // kept so the axis is continuous and a quiet week is visible as a gap.
-    const expenseByDay = useMemo(() => {
-        const start = range.startDate || txRange?.min_date;
-        const end = range.endDate || txRange?.max_date;
-        if (!start || !end || start > end) return [];
-        const byDay = new Map();
-        tx.forEach(t => {
-            if (t.kind !== 'expense') return;
-            const key = (t.txn_date || '').slice(0, 10);
-            if (!key || key < start || key > end) return;
-            byDay.set(key, (byDay.get(key) || 0) + Number(t.amount || 0));
-        });
-        const out = [];
-        const cursor = new Date(`${start}T00:00:00`);
-        const last = new Date(`${end}T00:00:00`);
-        for (let i = 0; cursor <= last && i < 800; i++) {
-            const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
-            out.push({
-                date: key,
-                label: cursor.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-                shortLabel: cursor.toLocaleDateString('en-IN', { day: 'numeric' }),
-                expense: Math.round((byDay.get(key) || 0) * 100) / 100,
-            });
-            cursor.setDate(cursor.getDate() + 1);
-        }
-        return out;
-    }, [tx, range.startDate, range.endDate, txRange]);
 
     // Filtered transactions for Transactions view (supports description, category, payment method, date, and amount numbers)
     const filteredTx = tx.filter(t => {

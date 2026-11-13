@@ -245,8 +245,11 @@ def test_k_unique_name_still_resolves(db, user, conversation, scripted):
 # ── L. a failed write is reported as a failure ──────────────────────────────
 
 def test_l_commit_failure_is_honest(db, user, conversation, scripted, monkeypatch):
-    monkeypatch.setattr(execution, "_commit",
-                        lambda db, op, kind: "The database refused the change — nothing was saved.")
+    monkeypatch.setattr(
+        execution, "_commit",
+        lambda db, op, kind: execution.CommitOutcome(
+            False, True, "The database refused the change — nothing was saved."),
+    )
     reply = {"reply": "Added the task.", "actions": [
         {"op": "add_task", "text": "Pay electricity bills", "due": "2026-11-14"}]}
     before = len(tasks(db, user))

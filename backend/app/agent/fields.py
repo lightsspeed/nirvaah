@@ -8,13 +8,18 @@ from __future__ import annotations
 import json
 import re
 from datetime import date, datetime
+from decimal import Decimal
+
+from ..money import ZERO, MoneyError, number, to_money
 
 
-def money(value) -> float:
+def money(value) -> Decimal:
+    """Quantised paise, ROUND_HALF_UP; an unusable value becomes zero."""
     try:
-        return round(float(value), 2)
-    except (TypeError, ValueError):
-        return 0.0
+        amount = to_money(value)
+    except MoneyError:
+        return ZERO
+    return ZERO if amount is None else amount
 
 
 def inr(value) -> str:
@@ -56,13 +61,13 @@ def date_value(payload: dict, key: str, default: date | None = None):
     raise ValueError(f"{key} must be a date like 2026-11-10")
 
 
-def month(payload: dict, default: str | None = None):
+def month(payload: dict, default: str | None = None, today: date | None = None):
     raw = str(payload.get("month") or "").strip()
     if re.fullmatch(r"\d{4}-\d{2}", raw):
         return raw
     if raw:
         raise ValueError("month must look like 2026-11")
-    return default or date.today().strftime("%Y-%m")
+    return default or (today or date.today()).strftime("%Y-%m")
 
 
 def tags(payload: dict):
@@ -73,13 +78,22 @@ def tags(payload: dict):
 
 
 def as_plain(value):
-    """A comparable, JSON-safe form of a model attribute."""
+    """A comparable, JSON-safe form of a model attribute.
+
+    Money keeps its JSON type: a Decimal or float amount comes back as a number
+    through the shared money utility, never as the string ``str(Decimal)`` would
+    produce, so ``changes`` in an assistant reply matches the rest of the API.
+    """
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds")
     if isinstance(value, date):
         return value.isoformat()
-    if isinstance(value, float):
-        return round(value, 2)
-    if isinstance(value, bool) or value is None or isinstance(value, str):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value          # an integer field is not money: keep it whole
+    if isinstance(value, (Decimal, float)):
+        return number(value)
+    if value is None or isinstance(value, str):
         return value
     return str(value)

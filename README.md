@@ -2,6 +2,14 @@
 
 Nirvaah is a responsive personal finance MVP with a modular fintech dashboard inspired by the supplied visual reference.
 
+## Engineering standards
+
+How this repository is built and reviewed lives in [`docs/engineering/`](docs/engineering/):
+coding and API standards, architecture, database rules, security posture, testing
+expectations, the assistant's engineering contract, and a Definition of Done
+(including the known-debt ratchet). CI runs the checks described in
+`TESTING_STANDARDS.md` on every pull request.
+
 ## Stack
 - Frontend: React 18, Vite, Recharts, Lucide icons
 - Backend: FastAPI, SQLAlchemy, JWT authentication
@@ -76,6 +84,117 @@ DOCKER_NAMESPACE=lightsspeed APP_VERSION=1.0.0 docker compose up -d
 
 (The compose services carry `image:` names, so `pull` fetches the published tags;
 `docker compose build` still produces them locally when you want to build.)
+
+### Rebuilding after a code change
+
+`docker compose up -d` **reuses whatever image is already tagged** — it does not
+notice that `src/` changed. That is how a stack ends up running month-old code
+with a green test suite. Rebuild whenever the source moves:
+
+```bash
+docker compose up -d --build            # rebuild the changed service(s), then restart
+docker compose build backend            # build only, leave the stack running
+docker compose up -d --force-recreate backend   # restart onto the new image
+```
+
+`--pull` refreshes the base images as well; the four bases are digest-pinned, so a
+plain build keeps using exactly the pinned image and `--pull` only matters after
+you bump a digest by hand:
+
+```bash
+docker compose build --pull             # after updating a FROM ...@sha256: line
+docker buildx imagetools inspect python:3.12-slim   # the digest to pin
+```
+
+### Which commit is this image?
+
+Every image carries OCI labels, so the question is one command:
+
+```bash
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    lightsspeed/nirvaah-backend:1.0.0
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    lightsspeed/nirvaah-frontend:1.0.0
+```
+
+Compare that to `git rev-parse HEAD`. `release.sh` fills the revision from the
+checkout it builds and the date from the build moment; CI passes the commit SHA;
+a bare local build records `unknown` rather than a guess. The labels also cover
+`source`, `version` and `created`.
+
+Nothing here deploys anything: `up` and `build` are local Docker only. Publishing
+is `release.sh`, which tags and pushes to the registry and stops there.
+
+## Schema migrations
+
+`create_all()` at startup only creates **missing tables** — it never adds an index
+to a table that already exists. Schema changes therefore ship as numbered SQL files
+in [`backend/migrations`](backend/migrations) and are applied deliberately:
+
+```bash
+docker compose run --rm backend python -m app.migrate
+```
+
+Each run applies every pending file in one transaction and records it in
+`schema_migrations`; a second run is a no-op. On PostgreSQL a failure rolls the
+batch back and an advisory lock stops two runners from racing. Nothing is applied
+at container start, so a deploy never issues DDL against a live database, and a
+freshly created database needs this command once.
+
+A file may declare `-- dialect: postgresql` in its first lines. That file is then
+applied to PostgreSQL only (the SQLite database the tests use skips it) and may
+contain several statements. `0002_money_numeric_14_2.sql` is one: it refuses to
+run at all if any amount is NaN, infinite, wider than `numeric(14,2)`, or a
+positive-only column that would round to `0.00`, then converts all nine money
+columns and adds a CHECK constraint to each.
+
+### Recovering a lost migration record
+
+The runner never guesses whether a migration is applied. If `schema_migrations` is
+missing a row for DDL that is already in the database — a restore from an older
+dump, or a script run by hand — that file fails with `already exists` and the
+version stays unrecorded, so it fails the same way on every run.
+
+Confirm the migration finished before recording it. `0002` adds nine CHECK
+constraints and converts nine money columns, so **both counts below must be 9**:
+
+```sql
+SELECT count(*) AS money_check_constraints
+FROM pg_constraint
+WHERE connamespace = 'public'::regnamespace
+  AND contype = 'c'
+  AND conname LIKE '%\_range';
+
+SELECT count(*) AS money_columns
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND numeric_precision = 14
+  AND numeric_scale = 2;
+```
+
+If either count is below 9, **do not insert the version**. The migration runs as a
+single transaction, so a partial state means part of it was applied outside the
+runner, or an object was dropped afterwards: repair the schema first. Recording the
+version over a gap turns it into something no later run will look at.
+
+Only once both counts are 9:
+
+```sql
+INSERT INTO schema_migrations (version) VALUES ('0002_money_numeric_14_2.sql');
+```
+
+Skipping a migration because its objects happen to exist is never done for you:
+existence is not evidence that the DDL finished.
+
+## Money
+
+Money is stored as `numeric(14,2)` and handled as Python `Decimal` — never a
+float. `backend/app/money.py` is the single place that converts: it reads floats
+through their shortest decimal form (`Decimal(str(value))`, so `10.005` means what
+the client typed), quantises to paise with `ROUND_HALF_UP`, enforces the column's
+range, and refuses a positive amount that would become zero. API responses still
+carry JSON **numbers**, not strings, so the frontend needs no change. The maximum
+a money column holds is `999,999,999,999.99`.
 
 ## Assistant reliability layer
 
@@ -202,31 +321,47 @@ terraform output env_block      # paste into ../.env
 A `backup` service runs beside the database. Every `BACKUP_INTERVAL_HOURS`
 (4 by default) it:
 
-1. `pg_dump --format=custom` the whole database,
-2. restores that archive into a scratch database and compares row counts with
-   the live one — a backup that cannot be restored is discarded, not uploaded,
-3. fingerprints the **rows** (one md5 per table, over a fixed order) and skips
-   the upload when nothing changed. Hashing the dump file itself does not work:
-   pg_dump embeds a timestamp and a random token, so the bytes differ every run,
-4. uploads to `s3://$S3_BUCKET/$S3_PREFIX/` if configured, always keeping one
-   local copy in the `backups` volume,
+1. `pg_dump --format=custom` the whole database and record a SHA-256 sidecar,
+2. restores that archive into a scratch database and compares **every** public
+   table — row count and a per-table md5 fingerprint — with the live database. A
+   backup that cannot be restored is discarded, not uploaded,
+3. fingerprints the **rows** and skips the upload when nothing changed. Hashing
+   the dump file itself does not work: pg_dump embeds a timestamp and a random
+   token, so the bytes differ every run,
+4. uploads to `s3://$S3_BUCKET/$S3_PREFIX/` with the digest in object metadata,
+   then verifies the upload with `head-object` (size, checksum metadata) **and**
+   downloads the object again to hash it. Only then is the run marked verified,
+   and only then does retention run, always keeping one local copy in the
+   `backups` volume plus the newest verified remote object,
 5. prunes archives older than `BACKUP_RETENTION_DAYS`, keeping the 1st of every
-   month for `BACKUP_RETENTION_MONTHS`.
+   month for `BACKUP_RETENTION_MONTHS`. A failed run prunes nothing, and the last
+   known good backup is never a candidate.
+
+`state/status.json` tracks the latest run (`status`, `last_run`, `last_run_ok`)
+and `last_success` separately, so a dead credential turns the healthcheck
+unhealthy while the last good copy stays identifiable. Full detail — checks,
+lock semantics, IAM scope and the test matrix — is in
+[`docs/engineering/BACKUP_AND_DR.md`](docs/engineering/BACKUP_AND_DR.md).
 
 ```bash
 # run one backup by hand (the arg goes to the entrypoint, not the script path)
 docker compose run --rm backup --once
 docker compose run --rm backup --status
+docker compose run --rm backup --health
+docker compose run --rm backup --verify-remote
 
 # restore drill: never restore into `finance` first
 docker compose run --rm --entrypoint /backup/restore.sh backup --list
 docker compose run --rm --entrypoint /backup/restore.sh backup --file latest.dump
-docker compose run --rm --entrypoint /backup/restore.sh backup --file latest.dump --into finance --force
+docker compose run --rm --entrypoint /backup/restore.sh backup --file latest.dump --into-live
 ```
 
-The restore drill prints row counts per table; swap the databases by renaming
-only after they look right. Cloudflare R2, Backblaze B2 and MinIO all work via
-`S3_ENDPOINT`; R2 is usually the cheapest for this because egress is free.
+The restore drill verifies the archive's checksum before it runs `pg_restore` and
+prints row counts per table; swap the databases by renaming only after they look
+right. `--force` only overrides a checksum refusal — it never lets a restore
+overwrite the live database without `--into-live`. Cloudflare R2, Backblaze B2
+and MinIO all work via `S3_ENDPOINT`; R2 is usually the cheapest for this because
+egress is free.
 
 ### Disaster recovery — what is actually covered
 

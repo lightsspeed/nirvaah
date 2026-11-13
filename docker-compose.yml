@@ -1,6 +1,8 @@
 services:
   db:
-    image: postgres:16-alpine
+    # Digest-pinned like the Dockerfile base images: postgres:16-alpine as resolved
+    # on 2026-11-13. Bump with `docker buildx imagetools inspect postgres:16-alpine`.
+    image: postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-finance}
@@ -39,7 +41,14 @@ services:
 
   backend:
     image: ${DOCKER_NAMESPACE:-lightsspeed}/nirvaah-backend:${APP_VERSION:-1.0.0}
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # GIT_REVISION / BUILD_DATE are exported by release.sh and CI; a plain
+        # local `docker compose build` records "unknown" rather than a guess.
+        APP_VERSION: ${APP_VERSION:-1.0.0}
+        GIT_REVISION: ${GIT_REVISION:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-finance}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/${POSTGRES_DB:-finance}
@@ -95,6 +104,9 @@ services:
       context: ./frontend
       args:
         VITE_API_URL: /api
+        APP_VERSION: ${APP_VERSION:-1.0.0}
+        GIT_REVISION: ${GIT_REVISION:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     restart: unless-stopped
     networks:
       - app
@@ -163,10 +175,10 @@ services:
       - ALL
     mem_limit: 256m
     pids_limit: 100
-    # Unhealthy when no successful run has landed in twice the interval, so
-    # `docker compose ps` is enough to notice a dead backup agent.
+    # Unhealthy when the newest run failed or when no run has landed in twice
+    # the interval, so `docker compose ps` is enough to notice a dead agent.
     healthcheck:
-      test: ['CMD-SHELL', '/backup/backup.sh --status | grep -qE "ok|unchanged" || exit 1']
+      test: ['CMD-SHELL', '/backup/backup.sh --health']
       interval: 30m
       timeout: 10s
       retries: 2

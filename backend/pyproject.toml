@@ -1,0 +1,48 @@
+# Engineering tooling for the Nirvaah backend.
+#
+# This file configures Ruff only — it is not a packaging manifest, and the app is
+# installed from requirements.txt. Keep it that way unless the project actually
+# becomes a distributable package.
+
+[tool.ruff]
+# The codebase is written in ~100-character lines; 110 leaves room without
+# forcing a mass reformat. Ruff's formatter wraps to this width.
+line-length = 110
+target-version = "py312"
+src = ["app", "tests"]
+
+extend-exclude = [
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+]
+
+[tool.ruff.lint]
+# Deliberately narrow: rules that catch defects, plus the imports/upgrade rules
+# that keep the code consistent with the Python version we actually run.
+# Style-only families (SIM, DTZ, PLR, TRY, FURB, RUF) are intentionally off
+# until the baseline is clean — see docs/engineering/CODING_STANDARDS.md.
+select = [
+    "E4",   # import problems
+    "E7",   # statements that do nothing (comparisons, etc.)
+    "E9",   # syntax/runtime errors
+    "F",    # pyflakes: undefined names, unused imports, f-string bugs
+    "I",    # import sorting
+    "B",    # bugbear: real-bug patterns
+    "UP",   # pyupgrade: obsolete syntax for our target version
+]
+
+ignore = [
+    # FastAPI's dependency injection *is* a call in a default argument.
+    "B008",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+lines-after-imports = 2
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = false

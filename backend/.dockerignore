@@ -5,3 +5,7 @@ __pycache__/
 *.sqlite3
 tests/
 .pytest_cache/
+.ruff_cache/
+*.log
+.env
+.env.*

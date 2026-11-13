@@ -13,6 +13,7 @@ The result shape is the contract the graph and the API speak:
       "entity_id": "...",
       "changes": {"due": {"before": "2026-11-15", "after": "2026-11-21"}},
       "verified": bool,
+      "uncertain": bool,     # the commit landed or not — we could not tell
       "error": None | str,
       # legacy keys the UI already renders
       "ok": bool, "op": "...", "summary": "...", "pending": bool
@@ -23,11 +24,19 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import DataError, IntegrityError, NotSupportedError, ProgrammingError
+from sqlalchemy.orm import Session, sessionmaker
 
 from .. import models
+from decimal import Decimal
+
+from ..money import ZERO, MoneyError, require_money, to_money
+from ..timeutil import utcnow
 from . import obs
+from . import tasks as task_intel
+from .credentials import credential_kind, refusal as credential_refusal
 from . import resolve as resolver
 from .fields import as_plain, date_value, inr, month, num, tags, text
 
@@ -58,21 +67,32 @@ STRING_PK = {models.Note, models.Task, models.JournalEntry}
 
 # ── field builders ───────────────────────────────────────────────────────────
 
-def _transaction_fields(action: dict, *, creating: bool) -> dict:
+def _business_today(context: dict | None) -> date:
+    """The caller's calendar date for defaults, or the server's day if none came in.
+
+    ``context`` is built by the graph from ``timeutil.today_for_timezone`` — one
+    resolved date for the whole turn, so a transaction and the journal entry it
+    produces cannot land on different days.
+    """
+    value = (context or {}).get("today")
+    return value if isinstance(value, date) else date.today()
+
+
+def _transaction_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         kind = text(action, "kind", "expense").lower()
         if kind not in ("income", "expense"):
             raise ValueError("A transaction is either income or expense.")
         fields["kind"] = kind
-        amount = num(action, "amount")
-        if amount <= 0:
+        amount = to_money(num(action, "amount"))
+        if amount <= ZERO:
             raise ValueError("A transaction needs an amount greater than zero.")
-        fields["amount"] = round(amount, 2)
+        fields["amount"] = amount
         fields["category"] = text(action, "category", "Other") or "Other"
         fields["description"] = text(action, "description")
         fields["payment_method"] = text(action, "payment_method", "SBI") or "SBI"
-        fields["txn_date"] = date_value(action, "txn_date", __import__("datetime").date.today())
+        fields["txn_date"] = date_value(action, "txn_date", _business_today(context))
         return fields
     if "kind" in action:
         kind = text(action, "kind").lower()
@@ -80,10 +100,10 @@ def _transaction_fields(action: dict, *, creating: bool) -> dict:
             raise ValueError("A transaction is either income or expense.")
         fields["kind"] = kind
     if "amount" in action:
-        amount = num(action, "amount")
-        if amount <= 0:
+        amount = to_money(num(action, "amount"))
+        if amount <= ZERO:
             raise ValueError("A transaction needs an amount greater than zero.")
-        fields["amount"] = round(amount, 2)
+        fields["amount"] = amount
     for key in ("category", "description", "payment_method"):
         if key in action:
             fields[key] = text(action, key)
@@ -92,48 +112,53 @@ def _transaction_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _budget_fields(action: dict, *, creating: bool) -> dict:
+def _budget_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["category"] = text(action, "category") or "Other"
-        fields["monthly_limit"] = round(num(action, "monthly_limit"), 2)
-        fields["month"] = month(action)
+        fields["monthly_limit"] = require_money(num(action, "monthly_limit"),
+                                                field="monthly_limit", positive=True)
+        fields["month"] = month(action, today=_business_today(context))
         return fields
     if "monthly_limit" in action:
-        fields["monthly_limit"] = round(num(action, "monthly_limit"), 2)
+        fields["monthly_limit"] = require_money(num(action, "monthly_limit"),
+                                                field="monthly_limit", positive=True)
     if "category" in action:
         fields["category"] = text(action, "category")
     if "month" in action:
-        fields["month"] = month(action)
+        fields["month"] = month(action, today=_business_today(context))
     return fields
 
 
-def _goal_fields(action: dict, *, creating: bool) -> dict:
+def _goal_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["name"] = text(action, "name") or "Goal"
-        fields["target_amount"] = round(num(action, "target_amount"), 2)
-        fields["saved_amount"] = round(num(action, "saved_amount", 0), 2)
+        fields["target_amount"] = require_money(num(action, "target_amount"),
+                                                field="target_amount", positive=True)
+        fields["saved_amount"] = require_money(num(action, "saved_amount", 0),
+                                               field="saved_amount")
         fields["target_date"] = date_value(action, "target_date", None)
         return fields
     if "name" in action:
         fields["name"] = text(action, "name")
-    for key in ("target_amount", "saved_amount"):
+    for key, positive in (("target_amount", True), ("saved_amount", False)):
         if key in action:
-            fields[key] = round(num(action, key), 2)
+            fields[key] = require_money(num(action, key), field=key, positive=positive)
     if "target_date" in action:
         fields["target_date"] = date_value(action, "target_date", None)
     return fields
 
 
-def _investment_fields(action: dict, *, creating: bool) -> dict:
+def _investment_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
-        invested = round(num(action, "invested_amount", 0), 2)
+        invested = require_money(num(action, "invested_amount", 0), field="invested_amount")
         fields["name"] = text(action, "name") or "Investment"
         fields["asset_type"] = text(action, "asset_type", "Mutual Fund") or "Mutual Fund"
         fields["invested_amount"] = invested
-        fields["current_value"] = round(num(action, "current_value", invested), 2)
+        fields["current_value"] = require_money(num(action, "current_value", invested),
+                                                field="current_value")
         fields["notes"] = text(action, "notes")
         return fields
     for key in ("name", "asset_type", "notes"):
@@ -141,17 +166,18 @@ def _investment_fields(action: dict, *, creating: bool) -> dict:
             fields[key] = text(action, key)
     for key in ("invested_amount", "current_value"):
         if key in action:
-            fields[key] = round(num(action, key), 2)
+            fields[key] = require_money(num(action, key), field=key)
     return fields
 
 
-def _liability_fields(action: dict, *, creating: bool) -> dict:
+def _liability_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["name"] = text(action, "name") or "Liability"
         fields["liability_type"] = text(action, "liability_type", "Loan") or "Loan"
-        fields["outstanding_amount"] = round(num(action, "outstanding_amount", 0), 2)
-        fields["monthly_emi"] = round(num(action, "monthly_emi", 0), 2)
+        fields["outstanding_amount"] = require_money(num(action, "outstanding_amount", 0),
+                                                     field="outstanding_amount")
+        fields["monthly_emi"] = require_money(num(action, "monthly_emi", 0), field="monthly_emi")
         fields["notes"] = text(action, "notes")
         return fields
     for key in ("name", "liability_type", "notes"):
@@ -159,11 +185,11 @@ def _liability_fields(action: dict, *, creating: bool) -> dict:
             fields[key] = text(action, key)
     for key in ("outstanding_amount", "monthly_emi"):
         if key in action:
-            fields[key] = round(num(action, key), 2)
+            fields[key] = require_money(num(action, key), field=key)
     return fields
 
 
-def _note_fields(action: dict, *, creating: bool) -> dict:
+def _note_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["title"] = text(action, "title") or "Untitled note"
@@ -181,7 +207,7 @@ def _note_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _task_fields(action: dict, *, creating: bool) -> dict:
+def _task_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         label = text(action, "text") or text(action, "title")
@@ -214,22 +240,24 @@ def _task_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _journal_fields(action: dict, *, creating: bool) -> dict:
+def _journal_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["title"] = text(action, "title") or "Journal entry"
         fields["description"] = text(action, "description")
         fields["category"] = text(action, "category", "Life") or "Life"
         fields["mood"] = (text(action, "mood", "steady") or "steady").lower()
-        fields["amount"] = num(action, "amount", None) if action.get("amount") not in (None, "") else None
-        fields["event_date"] = date_value(action, "date", __import__("datetime").date.today())
+        # Nullable, but quantised and sign-checked like every other amount.
+        fields["amount"] = (None if action.get("amount") in (None, "")
+                            else require_money(num(action, "amount"), field="amount"))
+        fields["event_date"] = date_value(action, "date", _business_today(context))
         fields["tags"] = tags(action)
         return fields
     for key in ("title", "description", "category", "mood"):
         if key in action:
             fields[key] = text(action, key)
     if action.get("amount") not in (None, ""):
-        fields["amount"] = num(action, "amount")
+        fields["amount"] = require_money(num(action, "amount"), field="amount")
     if "date" in action or "event_date" in action:
         fields["event_date"] = date_value(action, "date" if "date" in action else "event_date")
     if "tags" in action:
@@ -253,10 +281,12 @@ FIELD_BUILDERS = {
 
 def _result(op: str, kind: str, *, success: bool, verified: bool = False,
             entity_id=None, changes: dict | None = None, error: str | None = None,
-            summary: str = "", pending: bool = False) -> dict:
+            summary: str = "", pending: bool = False, uncertain: bool = False) -> dict:
     return {
         "success": success,
         "verified": verified,
+        # A write that may or may not have committed is neither success nor failure.
+        "uncertain": uncertain,
         "operation": op,
         "op": op,
         "entity_type": kind,
@@ -272,10 +302,12 @@ def _result(op: str, kind: str, *, success: bool, verified: bool = False,
 
 
 def _same(left, right) -> bool:
-    if isinstance(left, float) or isinstance(right, float):
+    """Quantise both sides to paise, then compare — no tolerance to hide drift."""
+    if isinstance(left, (float, Decimal, int)) and not isinstance(left, bool) \
+            or isinstance(right, (float, Decimal, int)) and not isinstance(right, bool):
         try:
-            return abs(float(left) - float(right)) < 0.005
-        except (TypeError, ValueError):
+            return to_money(left) == to_money(right)
+        except MoneyError:
             return left == right
     if isinstance(left, str) and isinstance(right, str):
         return left.strip() == right.strip()
@@ -288,15 +320,94 @@ def _read_back(db: Session, model, pk):
     return db.get(model, pk)
 
 
-def _commit(db: Session, op: str, kind: str) -> str | None:
+# The database answered and rejected the transaction: the rollback is certain.
+REJECTIONS = (IntegrityError, DataError, ProgrammingError, NotSupportedError)
+
+UNCERTAIN = ("I could not confirm whether that change was saved — the connection dropped "
+             "while it was being written. Please check the record before trying again.")
+
+
+@dataclass(frozen=True)
+class CommitOutcome:
+    """The three states a commit can end in.
+
+    ``ok``          committed and acknowledged.
+    ``definite``    the database rejected it; nothing was saved.
+    neither         the acknowledgement was lost; the row may exist.
+    """
+
+    ok: bool
+    definite: bool = True
+    error: str | None = None
+
+
+def _safe_rollback(db: Session) -> None:
+    """A dead connection cannot roll back; that must not mask the original error."""
+    try:
+        db.rollback()
+    except Exception:  # noqa: BLE001
+        obs.inc("rollback_failed")
+
+
+def _probe_row(db: Session, model, pk):
+    """Read the row over a fresh connection: (row, probe_ran).
+
+    The session that lost the commit acknowledgement may be unusable, so the
+    probe never reuses it. ``probe_ran`` is False when even the read failed —
+    which proves nothing about the write.
+    """
+    try:
+        probe = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)()
+    except Exception as exc:  # noqa: BLE001
+        obs.event("probe_failed", error=str(exc)[:160])
+        return None, False
+    try:
+        return probe.get(model, pk), True
+    except Exception as exc:  # noqa: BLE001 - the connection may still be gone
+        obs.event("probe_failed", error=str(exc)[:160])
+        return None, False
+    finally:
+        try:
+            probe.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _memory_persisted(db: Session, user, fact: str) -> bool:
+    """Did this fact land? Same fresh-connection rule as _probe_row."""
+    try:
+        probe = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)()
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        return (probe.query(models.MemoryFact)
+                .filter(models.MemoryFact.user_id == user.id, models.MemoryFact.fact == fact)
+                .first() is not None)
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            probe.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _commit(db: Session, op: str, kind: str) -> CommitOutcome:
     try:
         db.commit()
-    except Exception as exc:  # noqa: BLE001 - any driver error is a failed write
-        db.rollback()
+        return CommitOutcome(True)
+    except REJECTIONS as exc:
+        _safe_rollback(db)
         obs.inc("commit_failed")
-        obs.event("commit_failed", operation=op, entity_type=kind, error=str(exc)[:200])
-        return "The database refused the change — nothing was saved."
-    return None
+        obs.event("commit_failed", operation=op, entity_type=kind, error=str(exc)[:200],
+                  definite=True)
+        return CommitOutcome(False, True,
+                             "The database refused the change — nothing was saved.")
+    except Exception as exc:  # noqa: BLE001 - connection loss: the outcome is unknown
+        _safe_rollback(db)
+        obs.inc("commit_uncertain")
+        obs.event("commit_uncertain", operation=op, entity_type=kind, error=str(exc)[:200])
+        return CommitOutcome(False, False, UNCERTAIN)
 
 
 def _summarise(kind: str, verb: str, row) -> str:
@@ -312,8 +423,43 @@ def _summarise(kind: str, verb: str, row) -> str:
 
 # ── the executor ─────────────────────────────────────────────────────────────
 
+def _remember(db: Session, user, action: dict, *, dry_run: bool, op: str) -> dict:
+    """A memory fact, with the same commit-ambiguity rules as any other write."""
+    label = text(action, "fact") or text(action, "text")
+    if not label:
+        return _result(op, "memory", success=False, error="Nothing to remember.")
+    # A memory is replayed into every later prompt, so a credential must never
+    # reach the database. The value is never echoed or logged (Task 27.6.3.2).
+    kind = credential_kind(label)
+    if kind:
+        obs.inc("memory_credential_refused")
+        obs.event("memory_credential_refused", kind=kind)
+        return _result(op, "memory", success=False, error=credential_refusal(kind))
+    if dry_run:
+        db.rollback()
+        # Nothing was written, so nothing can be verified.
+        return _result(op, "memory", success=False,
+                       error="Nothing was saved — that was a dry run.")
+    db.add(models.MemoryFact(user_id=user.id, fact=label[:400],
+                             source=text(action, "source")[:160]))
+    outcome = _commit(db, op, "memory")
+    if not outcome.ok and outcome.definite:
+        return _result(op, "memory", success=False, error=outcome.error)
+    if not outcome.ok and not _memory_persisted(db, user, label[:400]):
+        obs.inc("commit_unconfirmed")
+        return _result(op, "memory", success=False, uncertain=True, error=UNCERTAIN)
+    return _result(op, "memory", success=True, verified=True,
+                   summary=f"Remembered: {label[:140]}")
+
+
 def execute(db: Session, user, action: dict, dry_run: bool = False, context: dict | None = None) -> dict:
     op = str(action.get("op") or "").strip()
+    # The prompt documents {"op": "remember"} (rule 17); it names no entity kind,
+    # so it is handled before the kind lookup rather than falling through it.
+    if op == "remember":
+        return _remember(db, user, action, dry_run=dry_run, op=op)
+    if op.startswith("remember_"):
+        return _remember(db, user, action, dry_run=dry_run, op=op)
     parts = op.split("_", 1)
     if len(parts) != 2:
         return _result(op, "unknown", success=False, error=f"I do not know how to {op or 'do that'}.")
@@ -323,19 +469,6 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     if spec is None:
         return _result(op, kind, success=False, error=f"{kind} records are not something I can change.")
 
-    if verb == "remember":
-        label = text(action, "fact") or text(action, "text")
-        if not label:
-            return _result(op, "memory", success=False, error="Nothing to remember.")
-        if dry_run:
-            db.rollback()
-            return _result(op, "memory", success=True, verified=True, summary=f"Remembered: {label[:140]}")
-        db.add(models.MemoryFact(user_id=user.id, fact=label[:400], source=text(action, "source")[:160]))
-        error = _commit(db, op, "memory")
-        if error:
-            return _result(op, "memory", success=False, error=error)
-        return _result(op, "memory", success=True, verified=True, summary=f"Remembered: {label[:140]}")
-
     if verb not in WRITE_OPS:
         return _result(op, kind, success=False, error=f"I do not know how to {op}.")
 
@@ -344,7 +477,7 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     # ── create ──────────────────────────────────────────────────────────────
     if verb == "add":
         try:
-            fields = builder(action, creating=True)
+            fields = builder(action, creating=True, context=context)
         except ValueError as exc:
             return _result(op, kind, success=False, error=str(exc))
         pk = action.get("id") or (str(uuid.uuid4()) if spec.model in STRING_PK else None)
@@ -353,22 +486,39 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
             row.id = pk
         for key, value in fields.items():
             setattr(row, key, value)
+        if kind == "task":
+            # A task created already done still gets one completion stamp.
+            task_intel.set_done(row, bool(fields.get("done", False)), was=False)
         if hasattr(row, "updated_at"):
-            row.updated_at = __import__("datetime").datetime.utcnow()
+            row.updated_at = utcnow()
         db.add(row)
-        error = _commit(db, op, kind)
-        if error:
-            return _result(op, kind, success=False, error=error)
-
+        outcome = _commit(db, op, kind)
         row_id = row.id
-        fresh = _read_back(db, spec.model, row_id)
+
+        if not outcome.ok and outcome.definite:
+            return _result(op, kind, success=False, error=outcome.error)
+
+        # Committed, or the acknowledgement was lost: the row itself decides. A
+        # probe that cannot read proves nothing, so it yields "uncertain".
+        if outcome.ok:
+            fresh = _read_back(db, spec.model, row_id)
+        else:
+            fresh = _probe_row(db, spec.model, row_id)[0]
         if fresh is None:
+            if not outcome.ok:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
             obs.inc("verify_failed")
             return _result(op, kind, success=False, entity_id=row_id,
                            error="The write did not persist — nothing was saved.")
         after = {k: as_plain(getattr(fresh, k, None)) for k in fields}
         mismatched = [k for k, v in fields.items() if not _same(after.get(k), as_plain(v))]
         if mismatched:
+            if not outcome.ok:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
             obs.inc("verify_failed")
             obs.event("verify_failed", operation=op, entity_type=kind, entity_id=row_id,
                       fields=mismatched)
@@ -412,10 +562,22 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
         else:
             db.add(models.Deletion(id=str(row_id), user_id=user.id, kind=kind))
             db.delete(row)
-        error = _commit(db, op, kind)
-        if error:
-            return _result(op, kind, success=False, entity_id=row_id, error=error)
-        if _read_back(db, spec.model, row_id) is not None:
+        outcome = _commit(db, op, kind)
+        if not outcome.ok and outcome.definite:
+            return _result(op, kind, success=False, entity_id=row_id, error=outcome.error)
+        if outcome.ok:
+            remaining = _read_back(db, spec.model, row_id)
+        else:
+            remaining, probe_ran = _probe_row(db, spec.model, row_id)
+            if remaining is None and not probe_ran:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
+        if remaining is not None:
+            if not outcome.ok:
+                obs.inc("commit_unconfirmed")
+                return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                               error=UNCERTAIN)
             obs.inc("verify_failed")
             obs.event("verify_failed", operation=op, entity_type=kind, entity_id=row_id)
             return _result(op, kind, success=False, entity_id=row_id,
@@ -427,7 +589,7 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
 
     # ── update ──────────────────────────────────────────────────────────────
     try:
-        fields = builder(action, creating=False)
+        fields = builder(action, creating=False, context=context)
     except ValueError as exc:
         return _result(op, kind, success=False, entity_id=row_id, error=str(exc))
     if not fields:
@@ -435,19 +597,31 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
                        error=f"Nothing to change on that {spec.label}.")
 
     before = {key: as_plain(getattr(row, key, None)) for key in fields}
+    was_done = bool(getattr(row, "done", False)) if kind == "task" else None
     for key, value in fields.items():
         setattr(row, key, value)
+    if kind == "task" and "done" in fields:
+        # One completion rule for every path: stamp on the transition to done,
+        # keep the original stamp on a repeat, clear it on reopen.
+        task_intel.set_done(row, bool(fields["done"]), was=was_done)
     if hasattr(row, "updated_at"):
-        row.updated_at = __import__("datetime").datetime.utcnow()
+        row.updated_at = utcnow()
 
-    error = _commit(db, op, kind)
-    if error:
-        return _result(op, kind, success=False, entity_id=row_id,
-                       changes={k: {"before": before[k], "after": as_plain(v)} for k, v in fields.items()},
-                       error=error)
+    outcome = _commit(db, op, kind)
+    intended = {k: {"before": before[k], "after": as_plain(v)} for k, v in fields.items()}
+    if not outcome.ok and outcome.definite:
+        return _result(op, kind, success=False, entity_id=row_id, changes=intended,
+                       error=outcome.error)
 
-    fresh = _read_back(db, spec.model, row_id)
+    if outcome.ok:
+        fresh = _read_back(db, spec.model, row_id)
+    else:
+        fresh = _probe_row(db, spec.model, row_id)[0]
     if fresh is None:
+        if not outcome.ok:
+            obs.inc("commit_unconfirmed")
+            return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                           error=UNCERTAIN)
         obs.inc("verify_failed")
         return _result(op, kind, success=False, entity_id=row_id,
                        error=(f"That {spec.label} disappeared during the update — "
@@ -456,6 +630,10 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     mismatched = [k for k, v in fields.items() if not _same(after.get(k), as_plain(v))]
     changes = {k: {"before": before[k], "after": after.get(k)} for k in fields}
     if mismatched:
+        if not outcome.ok:
+            obs.inc("commit_unconfirmed")
+            return _result(op, kind, success=False, entity_id=row_id, uncertain=True,
+                           changes=changes, error=UNCERTAIN)
         obs.inc("verify_failed")
         obs.event("verify_failed", operation=op, entity_type=kind, entity_id=row_id,
                   fields=mismatched, changes=changes)

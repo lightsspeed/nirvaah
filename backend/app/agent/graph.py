@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from typing import Any, Callable, TypedDict
 
 from sqlalchemy.orm import Session
@@ -32,7 +33,6 @@ from ..ai import (
     DELETE_OPS,
     build_snapshot,
     clean_reply,
-    execute_action,
     guard_action,
     parse_model_output,
     system_prompt,
@@ -78,6 +78,7 @@ class ChatState(TypedDict, total=False):
     steps: list[str]
     retried: bool
     analytics: dict
+    chat_context: dict
     focus: dict
     data_range: dict
     conversation_id: str
@@ -109,6 +110,47 @@ def _memories(db: Session, user) -> list[str]:
     return [row.fact for row in reversed(rows)]
 
 
+def _fit_facts(facts: dict, limit: int) -> dict:
+    """Trim rows — never characters — until the facts fit the prompt budget.
+
+    Slicing the serialised JSON cuts a record in half and produces invalid JSON,
+    which the model then misreads. Dropping whole rows keeps every record intact
+    and makes ``shown``/``truncated`` tell the truth.
+    """
+    def size(payload) -> int:
+        return len(json.dumps(payload, default=str))
+
+    if size(facts) <= limit:
+        return facts
+    key = next((name for name in ("transactions", "items") if isinstance(facts.get(name), list)), None)
+    if key is None:
+        return facts
+    rows = list(facts[key])
+    trimmed = {**facts}
+    while rows and size({**trimmed, key: rows}) > limit:
+        rows.pop()
+    trimmed[key] = rows
+    trimmed["shown"] = len(rows)
+    trimmed["truncated"] = True
+    return trimmed
+
+
+def _thread_context_line(prior: dict | None, carried: dict) -> str:
+    """The prompt line for filters carried in from earlier turns, if there are any."""
+    if not isinstance(prior, dict) or not (prior.get("category") or prior.get("month")):
+        return ""
+    parts = []
+    if carried.get("category"):
+        parts.append(f"category={carried['category']}")
+    if carried.get("month"):
+        parts.append(f"month={carried['month']}")
+    if not parts:
+        return ""
+    return ("\n\nTHREAD CONTEXT: " + " ".join(parts) +
+            " (filters carried from earlier turns, not figures — answer from FACTS "
+            "and never reuse an earlier number).")
+
+
 def _facts_block(analysis: dict) -> str:
     """The verified analytics for this question, as the model sees them."""
     intent = analysis.get("intent")
@@ -120,28 +162,51 @@ def _facts_block(analysis: dict) -> str:
     if status and status != "ok":
         instruction = {
             "unknown_category": "That category does not exist in the user's data. Say so; never say zero.",
+            "ambiguous": "The reference is not clear. Ask exactly the question in FACTS and do not guess.",
             "no_data": "There are no transactions in that range. Say the range is empty; never say zero.",
             "no_data_for_category": "That category has no spending in that range. Say exactly that.",
         }.get(status, "That range could not be read. Say so plainly; never invent a figure.")
+        payload = _fit_facts(facts, 2500)
         return (f"{header}\nSTATUS: {status}\n{instruction}\nFACTS: "
-                f"{json.dumps(facts, default=str)[:2500]}")
+                f"{json.dumps(payload, default=str)[:2500]}")
+    # 5700 fits a full LIST_LIMIT of records (38 April groceries is ~4.9k) and
+    # still leaves most of an 8k-token context for the conversation and reply.
+    payload = _fit_facts(facts, 5700)
     return (f"{header}\nThese numbers are computed from the database. Quote them exactly; "
-            f"do not recompute or round differently.\nFACTS: {json.dumps(facts, default=str)[:4000]}")
+            f"do not recompute or round differently.\nFACTS: {json.dumps(payload, default=str)[:5700]}")
 
 
 def _nodes(db: Session, user, turn: int, prefer: str = "",
-           conversation_id: str = "") -> dict[str, Callable[[ChatState], dict]]:
+           conversation_id: str = "", today: date | None = None,
+           progress: dict | None = None,
+           timezone_name: str | None = None) -> dict[str, Callable[[ChatState], dict]]:
+    # Ground truth about this turn, kept outside the graph state: when invoke()
+    # raises we still have to know which node ran and which action was in flight.
+    progress = progress if progress is not None else {}
+    for key, empty in (("stage", ""), ("results", []), ("in_flight", ""), ("actions", []),
+                       ("reply", ""), ("analytics", {}), ("thought", False)):
+        progress.setdefault(key, empty)
+    # One calendar date for the whole turn: the snapshot, the planner and every
+    # write below resolve "today" from the same value, so a transaction and its
+    # journal entry cannot disagree about the day.
+    business_day = today or date.today()
+    context = {"today": business_day}
+
     def recall(state: ChatState) -> dict:
+        progress["stage"] = "recall"
         history = list(state.get("history") or [])
         message = state.get("message") or ""
         if message:
             history = history + [{"role": "user", "content": message}]
 
-        snapshot = build_snapshot(db, user, resolve_focus_month(message))
+        snapshot = build_snapshot(db, user, resolve_focus_month(message, today=business_day), today=business_day)
         memories = _memories(db, user)
 
+        thread_context = state.get("chat_context") or None
         with obs.timed("plan"):
-            analysis = planner.analyse(db, user, message)
+            analysis = planner.analyse(db, user, message, today=business_day,
+                                       context=thread_context, turn=turn,
+                                       timezone_name=timezone_name)
         data_range = planner.available_range(db, user)
         current_focus = focus_mod.get(db, user, conversation_id) if conversation_id else None
 
@@ -149,6 +214,11 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         facts = _facts_block(analysis)
         if facts:
             system += "\n\n" + facts
+        # The planner's answer is authoritative: a dict means "these are the
+        # filters now", an explicit None means "the user stepped out of the thread".
+        settled = analysis.get("context")
+        carried = settled if isinstance(settled, dict) else {}
+        system += _thread_context_line(thread_context, carried)
         if current_focus:
             system += (
                 "\n\nCURRENT FOCUS: this conversation is about "
@@ -174,18 +244,21 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                   analytics_status=raw_facts.get("status") if isinstance(raw_facts, dict) else None,
                   focus=current_focus["entity_id"] if current_focus else None)
 
+        progress.update(recalled=True, analytics=analysis)
         return {
             "history": history[-HISTORY_LIMIT:],
             "snapshot": snapshot,
             "memories": memories,
             "system": system,
             "analytics": analysis,
+            "chat_context": carried,
             "focus": current_focus or {},
             "data_range": data_range,
             "steps": ["recall"],
         }
 
     def think(state: ChatState) -> dict:
+        progress["stage"] = "think"
         prior = [
             {"role": m["role"], "content": m["content"]}
             for m in (state.get("history") or [])
@@ -212,6 +285,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             if second_actions:
                 reply, text, actions = second, second_text, second_actions
 
+        progress.update(thought=True, reply=text, actions=list(actions))
         return {
             "raw": reply.text,
             "provider": reply.provider,
@@ -243,8 +317,15 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         return None
 
     def act(state: ChatState) -> dict:
+        progress["stage"] = "act"
+        progress["act_started"] = True
         results: list[dict] = []
         message = state.get("message") or ""
+        facts = (state.get("analytics") or {}).get("facts")
+        if isinstance(facts, dict) and facts.get("status") == "ambiguous":
+            # A clarifying question must not change records, whatever the model returned.
+            return {"results": [], "applied": [], "pending": [], "failed": [],
+                    "steps": (state.get("steps") or []) + ["act"]}
 
         for raw_action in (state.get("actions") or [])[:10]:
             action = focus_mod.apply(db, user, conversation_id, raw_action, message)
@@ -256,27 +337,33 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             if mismatch:
                 result = execution._result(op, op.split("_")[-1], success=False, error=mismatch)
                 results.append(result)
+                progress["results"].append(result)
                 obs.inc("tool_failure")
                 obs.event("tool_call", conversation_id=conversation_id, turn=turn, tool=op,
                           status="refused", error=mismatch[:120])
                 continue
 
             if op in DELETE_OPS:
-                probe = execution.execute(db, user, action, dry_run=True)
+                probe = execution.execute(db, user, action, dry_run=True, context=context)
                 if probe.get("success"):
                     probe["pending"] = True
                     results.append(probe)
+                    progress["results"].append(probe)
                     obs.event("tool_call", conversation_id=conversation_id, turn=turn, tool=op,
                               status="pending", entity_id=probe.get("entity_id"))
                 else:
                     results.append(probe)
+                    progress["results"].append(probe)
                     obs.inc("tool_failure")
                     obs.event("tool_call", conversation_id=conversation_id, turn=turn, tool=op,
                               status="failed", error=(probe.get("error") or "")[:120])
                 continue
 
             with obs.timed("execute"):
-                result = execution.execute(db, user, action)
+                # Left set if execute raises: the mutation may have committed.
+                progress["in_flight"] = op
+                result = execution.execute(db, user, action, context=context)
+                progress["in_flight"] = ""
             obs.event("tool_call", conversation_id=conversation_id, turn=turn, tool=op,
                       entity_type=result.get("entity_type"), entity_id=result.get("entity_id"),
                       status="ok" if result.get("success") else "failed",
@@ -294,6 +381,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                                     entity_id=result.get("entity_id"),
                                     label=result.get("summary", ""), operation=op)
             results.append(result)
+            progress["results"].append(result)
 
         applied = [r for r in results if r.get("success") and not r.get("pending")]
         pending = [r for r in results if r.get("pending")]
@@ -307,6 +395,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         }
 
     def finish(state: ChatState) -> dict:
+        progress["stage"] = "finish"
         applied = state.get("applied") or []
         pending = state.get("pending") or []
         failed = state.get("failed") or []
@@ -314,7 +403,13 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         analysis = state.get("analytics") or {}
         facts = analysis.get("facts")
 
-        if failed and not applied and not pending:
+        # A write we could not confirm is never described as a definite failure.
+        uncertain = [r for r in failed if r.get("uncertain")]
+        if isinstance(facts, dict) and facts.get("status") == "ambiguous":
+            reply = facts.get("question") or "Which transactions do you mean?"
+        elif uncertain and not applied and not pending:
+            reply = uncertain[0].get("error") or UNCERTAIN_NOTE
+        elif failed and not applied and not pending:
             # The execution layer's own words: "did not persist", "3 tasks match …"
             reply = failed[0].get("error") or "I could not do that — nothing was changed."
         elif not applied and not pending and not failed and claims_change(reply):
@@ -341,6 +436,8 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                 reply = facts.get("message") or (
                     "I could not see any transactions for that range, so I cannot give a figure — "
                     "that is missing data, not zero.")
+        if uncertain and (applied or pending):
+            reply = (reply + " " + UNCERTAIN_NOTE).strip()
         reply = normalize_currency(clean_reply(reply, pending, applied))
 
         # Memories just written must be visible next turn, so re-read them.
@@ -373,6 +470,105 @@ def thread_id(user, conversation_id: str) -> str:
     return f"u{user.id}:{conversation_id}"
 
 
+_RECOVERY_UNCHANGED = (
+    "I hit a problem while handling that and stopped before changing anything. "
+    "Nothing was saved — please ask again."
+)
+UNCERTAIN_NOTE = ("One change could not be confirmed — please check it before repeating "
+                 "it.")
+_RECOVERY_UNCERTAIN = (
+    "I could not confirm whether that change was saved, so I stopped and did not retry it — "
+    "please check the record before trying again."
+)
+
+
+def _fallback_reply(state: dict, *, thought: bool, model_reply: str) -> str:
+    """A reply built from verified results alone — no model, no database."""
+    applied = state.get("applied") or []
+    pending = state.get("pending") or []
+    failed = state.get("failed") or []
+    if applied:
+        return "Done — " + "; ".join(a.get("summary", "") for a in applied) + "."
+    if pending:
+        return "I can remove that for you — confirm below."
+    if failed:
+        return failed[0].get("error") or "I could not do that — nothing was changed."
+    if thought and model_reply and not claims_change(model_reply):
+        return model_reply
+    return _RECOVERY_UNCHANGED
+
+
+def _recover(nodes: dict, state: dict, progress: dict, exc: Exception, *,
+             conversation_id: str = "") -> dict:
+    """End a turn that failed mid-graph without ever replaying a write.
+
+    `act` commits each action as it runs, so replaying the turn after a later
+    node fails would write the same records twice (audit finding H2). The nodes
+    record what they reached in `progress`, which survives the exception; the
+    recovery therefore renders a reply from verified results and stops. It never
+    calls the model again and never executes an action again — only `finish`,
+    which formats and touches nothing.
+    """
+    stage = progress.get("stage") or "graph"
+    uncertain = bool(progress.get("in_flight"))
+    # Classification only: the full text stays in the log, never in the response.
+    error = f"{type(exc).__name__} during {stage}"
+    obs.event("graph_error", conversation_id=conversation_id, stage=stage,
+              error=str(exc)[:200], uncertain=uncertain,
+              actions=len(progress.get("results") or []))
+
+    results = list(progress.get("results") or [])
+    recovered = dict(state)
+    recovered.update({
+        "analytics": progress.get("analytics") or {},
+        "actions": list(progress.get("actions") or state.get("actions") or []),
+        "results": results,
+        "applied": [r for r in results if r.get("success") and not r.get("pending")],
+        "pending": [r for r in results if r.get("pending")],
+        "failed": [r for r in results if not r.get("success")],
+        "reply": progress.get("reply") or "",
+        "graph_error": error,
+        "partial": True,
+        "uncertain": uncertain,
+        "finish_error": False,
+        "runner": "recovered",
+        "steps": list(state.get("steps") or []) + [f"recovered:{stage}"],
+    })
+
+    if uncertain:
+        # An action was in flight: its outcome is unknown, so nothing here may
+        # claim it succeeded or failed. Say exactly that and stop.
+        parts = []
+        if recovered["applied"]:
+            parts.append("Done — " + "; ".join(a.get("summary", "") for a in recovered["applied"]) + ".")
+        if recovered["failed"]:
+            parts.append(recovered["failed"][0].get("error") or "")
+        parts.append(_RECOVERY_UNCERTAIN)
+        recovered["reply"] = " ".join(p for p in parts if p)
+        return recovered
+
+    if not progress.get("thought"):
+        # The model never answered, so no action can have run.
+        recovered["reply"] = _RECOVERY_UNCHANGED
+        return recovered
+
+    finish_ok = False
+    try:
+        update = nodes["finish"](recovered)   # formatting only: no query, no write
+        recovered.update(update or {})
+        finish_ok = True
+    except Exception:  # noqa: BLE001 - a second failure must still end the turn
+        recovered["finish_error"] = True
+        obs.event("graph_error_finish", conversation_id=conversation_id, stage=stage)
+
+    # If finish could not run twice, the model's words were never checked against
+    # the results — use what the results themselves say instead.
+    if not finish_ok or not (recovered.get("reply") or "").strip():
+        recovered["reply"] = _fallback_reply(recovered, thought=True,
+                                             model_reply=progress.get("reply") or "")
+    return recovered
+
+
 def run_turn(
     db: Session,
     user,
@@ -381,12 +577,29 @@ def run_turn(
     history: list[dict],
     turn: int,
     prefer: str = "",
+    today: date | None = None,
+    chat_context: dict | None = None,
+    timezone_name: str | None = None,
 ) -> dict:
-    """Run one turn of a conversation and return the reply plus what changed."""
-    nodes = _nodes(db, user, turn, prefer, conversation_id=conversation_id)
+    """Run one turn of a conversation and return the reply plus what changed.
+
+    ``today`` is the caller's calendar date; the graph passes it to every
+    date-sensitive node so the assistant reasons in the user's day, not the
+    container's.
+
+    A graph failure is never retried as a whole turn: `act` commits as it goes,
+    so a replay would duplicate writes. The turn ends through `_recover`, which
+    keeps the results that already happened and tells the truth about the rest.
+    """
+    progress: dict = {"stage": "start", "recalled": False, "thought": False,
+                      "reply": "", "actions": [], "act_started": False,
+                      "in_flight": "", "results": [], "analytics": {}}
+    nodes = _nodes(db, user, turn, prefer, conversation_id=conversation_id, today=today,
+                   progress=progress, timezone_name=timezone_name)
     payload: ChatState = {
         "message": message,
         "history": history[-HISTORY_LIMIT:],
+        "chat_context": chat_context or {},
         "conversation_id": conversation_id,
         "turn": turn,
         # The checkpointer keeps a turn's channels until something overwrites
@@ -409,17 +622,27 @@ def run_turn(
             graph = _compile(nodes)
             result = graph.invoke(payload, {"configurable": {"thread_id": thread_id(user, conversation_id)}})
             result["runner"] = "langgraph"
+            result.setdefault("graph_error", "")
             return result
+        except providers.ProviderError:
+            # No model call happens after act, so nothing was written: the API's
+            # 503 "try again" contract still applies.
+            raise
         except Exception as exc:  # noqa: BLE001 - never lose the turn to a graph error
-            obs.event("graph_error", error=str(exc)[:200], conversation_id=conversation_id)
-            state: dict = dict(payload)
-            state["graph_error"] = str(exc)
+            return _recover(nodes, dict(payload), progress, exc,
+                            conversation_id=conversation_id)
 
     state = dict(payload)
     for name in ("recall", "think", "act", "finish"):
         if name == "act" and not state.get("actions"):
             continue
-        update = nodes[name](state)  # type: ignore[arg-type]
+        try:
+            update = nodes[name](state)  # type: ignore[arg-type]
+        except providers.ProviderError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return _recover(nodes, state, progress, exc, conversation_id=conversation_id)
         state.update(update or {})
     state["runner"] = "sequential"
+    state.setdefault("graph_error", "")
     return state

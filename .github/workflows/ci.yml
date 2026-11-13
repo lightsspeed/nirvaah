@@ -1,0 +1,185 @@
+name: CI
+
+# Checks only. Nothing here builds a release image, publishes to a registry or
+# deploys. See docs/engineering/TESTING_STANDARDS.md §6 for which steps block a
+# pull request and which are advisory until their baseline is cleared.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (lint, format, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── blocking: syntax errors, undefined names, bad forward references ──
+      - name: Ruff correctness gate
+        run: ruff check --select E9,F63,F7,F82,F821 app tests
+
+      # ── advisory: the configured rule set (81 findings on this branch) ────
+      - name: Ruff lint (advisory)
+        continue-on-error: true
+        run: |
+          echo "### Ruff lint — advisory baseline" >> "$GITHUB_STEP_SUMMARY"
+          ruff check app tests --statistics | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Ruff format check (advisory)
+        continue-on-error: true
+        run: |
+          echo "### Ruff format — advisory baseline" >> "$GITHUB_STEP_SUMMARY"
+          ruff format --check app tests | tail -1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Tests
+        env:
+          # The langsmith pytest plugin imports uuid_utils, which fails on some
+          # hosts. Plugin autoload is disabled so the run is deterministic.
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: pytest tests -q
+
+  frontend:
+    name: frontend (lint, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # ── advisory: 31 warnings (unused vars, exhaustive-deps); 0 errors ─────
+      - name: ESLint (advisory)
+        continue-on-error: true
+        run: |
+          echo "### ESLint — advisory baseline" >> "$GITHUB_STEP_SUMMARY"
+          npx eslint src --format stylish 2>&1 | tail -40 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Prettier check (advisory)
+        continue-on-error: true
+        run: |
+          echo "### Prettier — advisory baseline" >> "$GITHUB_STEP_SUMMARY"
+          npm run format:check 2>&1 | tail -20 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # ── blocking: date-only vs timestamp handling must not regress ──────────
+      - name: Unit tests (date handling)
+        run: node --test tests/
+
+      # ── blocking: a broken import or JSX error must never merge ───────────
+      - name: Production build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+          if-no-files-found: error
+
+  # ── The images must build. This job never logs in and never pushes: it exists so
+  # ── a broken Dockerfile or build context cannot merge green, which is exactly how
+  # ── the deployed images drifted behind the branch.
+  docker:
+    name: docker (build images, no push)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build metadata
+        run: |
+          echo "GIT_REVISION=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          echo "APP_VERSION=ci-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: nirvaah-backend:ci
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            GIT_REVISION=${{ env.GIT_REVISION }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=nirvaah-backend
+          cache-to: type=gha,mode=max,scope=nirvaah-backend
+
+      - name: Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          load: true
+          tags: nirvaah-frontend:ci
+          build-args: |
+            VITE_API_URL=/api
+            APP_VERSION=${{ env.APP_VERSION }}
+            GIT_REVISION=${{ env.GIT_REVISION }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=nirvaah-frontend
+          cache-to: type=gha,mode=max,scope=nirvaah-frontend
+
+      # The runtime must carry IANA timezone data, and the browser's legacy names
+      # (Chrome sends Asia/Calcutta) must resolve — see app/timeutil.py.
+      - name: Backend timezone runtime check
+        run: |
+          docker run --rm nirvaah-backend:ci python -c "
+          from zoneinfo import ZoneInfo
+          from app.timeutil import resolve_timezone
+          [ZoneInfo(z) for z in ('UTC', 'Asia/Kolkata', 'America/Los_Angeles')]
+          for alias in ('Asia/Calcutta', 'US/Pacific', 'Europe/Kiev'):
+              assert resolve_timezone(alias) is not None, alias
+          assert resolve_timezone('Mars/Olympus') is None
+          print('tzdata + legacy aliases ok')
+          "
+
+      # The labels are the whole point: an image that cannot say which commit it
+      # was built from is how "the running image is older than the branch" happens.
+      - name: Assert revision labels match the commit
+        run: |
+          set -euo pipefail
+          for img in nirvaah-backend:ci nirvaah-frontend:ci; do
+            got="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$img")"
+            echo "$img revision=$got"
+            if [ "$got" != "$GITHUB_SHA" ]; then
+              echo "::error::$img carries revision '$got', expected '$GITHUB_SHA'"
+              exit 1
+            fi
+          done

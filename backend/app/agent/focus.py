@@ -9,17 +9,22 @@ or replaces the focus, so a change of topic cannot silently retarget an old one.
 from __future__ import annotations
 
 import re
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..timeutil import utcnow
 from . import obs
 
-# "it", "that", "this", "them", "the same one", "its due date"…
+# "it", "that", "this", "them", "the same one", "its due date"… and the
+# relative forms the prompt already promises: "the last one", "the latest
+# task", "the previous one", "the most recent one".
 PRONOUN = re.compile(
     r"\b(it|its|it's|that|this|them|they|those|these|same one|the same|the task|the note|"
-    r"the record|the entry|the goal|the budget)\b",
+    r"the record|the entry|the goal|the budget|the last one|the latest one|the previous one|"
+    r"the most recent one|"
+    r"the (?:last|latest|previous|most recent) (?:task|note|record|entry|goal|budget|transaction|"
+    r"investment|liability|reminder))\b",
     re.I,
 )
 
@@ -49,7 +54,7 @@ def set_focus(db: Session, user, conversation_id: str, *, entity_type: str, enti
     row.entity_id = str(entity_id)
     row.label = (label or "")[:255]
     row.operation = (operation or "")[:40]
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     try:
         db.commit()
     except Exception as exc:  # noqa: BLE001 - focus is a convenience, never fail a turn

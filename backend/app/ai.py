@@ -6,86 +6,26 @@ holds the parts that touch the database and the record rules:
   * `build_snapshot()` — a compact, factual view of the user's records
   * `SYSTEM_RULES` / `system_prompt()` — how the model must answer
   * `parse_model_output()` — tolerant JSON reader
-  * `execute_action()` / `guard_action()` — validated writes, delete proposals
+  * `guard_action()` — refuses an action whose target is not what the user named
+
+Writes do not happen here: every mutation goes through `app/agent/execution.py`,
+which commits and then reads the row back before anything is reported as done.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import uuid
 from calendar import monthrange
-from datetime import date, datetime, timedelta
-from typing import Any
+from datetime import date, timedelta
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from . import models
-
-OLLAMA_MODEL = __import__("os").getenv("OLLAMA_MODEL", "qwen2.5:3b")
+from . import models, money
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
-
-def _money(value: Any) -> float:
-    try:
-        return round(float(value), 2)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _inr(value: Any) -> str:
-    amount = _money(value)
-    whole = f"{abs(amount):,.2f}"
-    return ("-" if amount < 0 else "") + "₹" + whole
-
-
-def _num(payload: dict, key: str, default=None):
-    if key in payload and payload[key] not in (None, ""):
-        try:
-            return float(payload[key])
-        except (TypeError, ValueError):
-            raise ValueError(f"{key} must be a number")
-    if default is not None:
-        return default
-    raise ValueError(f"{key} is required")
-
-
-def _text(payload: dict, key: str, default=""):
-    value = payload.get(key, default)
-    return "" if value is None else str(value).strip()
-
-
-def _date(payload: dict, key: str, default: date | None = None):
-    raw = payload.get(key)
-    if raw in (None, ""):
-        return default
-    if isinstance(raw, date):
-        return raw
-    text = str(raw).strip()[:10]
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d %b %Y", "%b %d %Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    raise ValueError(f"{key} must be a date like 2026-11-10")
-
-
-def _month(payload: dict, default: str | None = None):
-    raw = str(payload.get("month") or "").strip()
-    if re.fullmatch(r"\d{4}-\d{2}", raw):
-        return raw
-    if raw:
-        raise ValueError("month must look like 2026-11")
-    return default or date.today().strftime("%Y-%m")
-
-
-def _tags(payload: dict):
-    tags = payload.get("tags") or []
-    if isinstance(tags, str):
-        tags = [t.strip().lstrip("#") for t in tags.split(",")]
-    return json.dumps([str(t).strip().lstrip("#") for t in tags if str(t).strip()])
-
 
 
 def _month_bounds(month: str) -> tuple[date, date]:
@@ -105,22 +45,46 @@ def _txns_between(db: Session, user, start: date, end: date):
     )
 
 
+def _snapshot_month_expr(db: Session):
+    """'YYYY-MM' for txn_date, in whatever dialect this session is bound to."""
+    txn_date = models.Transaction.txn_date
+    if db.get_bind().dialect.name == "sqlite":
+        return func.strftime("%Y-%m", txn_date)
+    return func.to_char(txn_date, "YYYY-MM")
+
+
+def _snapshot_kind_expr():
+    """income stays income; every other kind counts as expense."""
+    return case((models.Transaction.kind == "income", "income"), else_="expense")
+
+
 def _totals(rows) -> dict:
-    income = sum(t.amount for t in rows if t.kind == "income")
-    expense = sum(t.amount for t in rows if t.kind == "expense")
+    income = money.total(t.amount for t in rows if t.kind == "income")
+    expense = money.total(t.amount for t in rows if t.kind == "expense")
+    return _totals_from_sums(income, expense)
+
+
+def _totals_from_sums(income, expense) -> dict:
+    """The same arithmetic, in Decimal, for figures the database already summed."""
+    income = money.to_money(income, default=money.ZERO)
+    expense = money.to_money(expense, default=money.ZERO)
     return {
-        "income": round(income, 2),
-        "expense": round(expense, 2),
-        "savings": round(income - expense, 2),
-        "savings_rate": round(((income - expense) / income) * 100, 1) if income else 0,
+        "income": money.number(income),
+        "expense": money.number(expense),
+        "savings": money.number(income - expense),
+        "savings_rate": round(float((income - expense) / income * 100), 1) if income else 0,
     }
 
 
 # ── data snapshot ───────────────────────────────────────────────────────────
 
-def build_snapshot(db: Session, user, month: str | None = None) -> dict:
-    """A compact, factual view of everything the assistant may talk about."""
-    today = date.today()
+def build_snapshot(db: Session, user, month: str | None = None, today: date | None = None) -> dict:
+    """A compact, factual view of everything the assistant may talk about.
+
+    ``today`` is the caller's calendar date (see ``app.timeutil.today_for_timezone``).
+    Omitting it keeps the old UTC-server behaviour, which is the documented fallback.
+    """
+    today = today or date.today()
     month = month or today.strftime("%Y-%m")
     start, end = _month_bounds(month)
     prev_end = start - timedelta(days=1)
@@ -128,18 +92,40 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
 
     this_month = _txns_between(db, user, start, end)
     prev_month = _txns_between(db, user, prev_start, prev_end)
-    all_rows = db.query(models.Transaction).filter(models.Transaction.user_id == user.id).all()
+
+    # Everything below used to sum a list of every transaction the user had. The
+    # database does that now; only the forty most recent rows are fetched whole.
+    month_key, kind_key = _snapshot_month_expr(db), _snapshot_kind_expr()
+    all_income, all_expense, all_count = (
+        db.query(
+            func.sum(case((models.Transaction.kind == "income", models.Transaction.amount), else_=0)),
+            func.sum(case((models.Transaction.kind == "expense", models.Transaction.amount), else_=0)),
+            func.count(models.Transaction.id),
+        )
+        .filter(models.Transaction.user_id == user.id)
+        .one()
+    )
+    all_income = money.to_money(all_income, default=money.ZERO)
+    all_expense = money.to_money(all_expense, default=money.ZERO)
+    all_count = int(all_count or 0)
 
     # Twelve months of totals, so "what about June?" is answerable even when the
     # month in focus is not the one being asked about.
     trend: dict[str, dict] = {}
-    for row in all_rows:
-        key = row.txn_date.strftime("%Y-%m")
-        bucket = trend.setdefault(key, {"income": 0.0, "expense": 0.0})
-        bucket["income" if row.kind == "income" else "expense"] += row.amount
+    for key, bucket_name, total in (
+        db.query(month_key, kind_key, func.sum(models.Transaction.amount))
+        .filter(models.Transaction.user_id == user.id)
+        .group_by(month_key, kind_key)
+        .all()
+    ):
+        if not key:
+            continue
+        bucket = trend.setdefault(key, {"income": money.ZERO, "expense": money.ZERO})
+        bucket["income" if bucket_name == "income" else "expense"] += money.to_money(total, default=money.ZERO)
     monthly_trend = [
-        {"month": key, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
-         "savings": round(v["income"] - v["expense"], 2)}
+        {"month": key,
+         "income": money.number(v["income"]), "expense": money.number(v["expense"]),
+         "savings": money.number(money.to_money(v["income"]) - money.to_money(v["expense"]))}
         for key, v in sorted(trend.items())[-12:]
     ]
 
@@ -147,12 +133,16 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
     # eats?" is a comparison across months, so a single month's breakdown can
     # never answer it — and a model asked anyway will invent figures.
     cat_month: dict[str, dict[str, float]] = {}
-    for row in all_rows:
-        if row.kind != "expense":
+    for category, key, total in (
+        db.query(models.Transaction.category, month_key, func.sum(models.Transaction.amount))
+        .filter(models.Transaction.user_id == user.id, models.Transaction.kind == "expense")
+        .group_by(models.Transaction.category, month_key)
+        .order_by(models.Transaction.category, month_key)
+        .all()
+    ):
+        if not key:
             continue
-        key = row.txn_date.strftime("%Y-%m")
-        month_bucket = cat_month.setdefault(row.category, {})
-        month_bucket[key] = month_bucket.get(key, 0.0) + row.amount
+        cat_month.setdefault(category, {})[key] = money.to_money(total, default=money.ZERO)
 
     # Every category is listed here (not just the biggest): capping this table
     # hides the one the user asks about, and the model then reports "no records"
@@ -162,10 +152,10 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
             {
                 "category": category,
                 "month": max(months, key=months.get),
-                "amount": round(max(months.values()), 2),
+                "amount": money.number(max(months.values())),
                 "months": len(months),
-                "total": round(sum(months.values()), 2),
-                "average": round(sum(months.values()) / len(months), 2),
+                "total": money.number(money.total(months.values())),
+                "average": money.number(money.total(months.values()) / len(months)),
             }
             for category, months in cat_month.items()
             if months
@@ -175,16 +165,16 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
     )
 
     category_spend_by_month = {
-        category: {month: round(amount, 2) for month, amount in sorted(months.items())[-18:]}
+        category: {month: money.number(amount) for month, amount in sorted(months.items())[-18:]}
         for category, months in sorted(
-            cat_month.items(), key=lambda item: sum(item[1].values()), reverse=True
+            cat_month.items(), key=lambda item: money.total(item[1].values()), reverse=True
         )[:12]
     }
 
     spent = {}
     for t in this_month:
         if t.kind == "expense":
-            spent[t.category] = spent.get(t.category, 0) + t.amount
+            spent[t.category] = spent.get(t.category, money.ZERO) + t.amount
 
     budgets = db.query(models.Budget).filter(models.Budget.user_id == user.id).order_by(models.Budget.month.desc()).all()
     goals = db.query(models.Goal).filter(models.Goal.user_id == user.id).all()
@@ -198,9 +188,23 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
         text = re.sub(r"\s+", " ", str(text or "")).strip()
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
-    recent = sorted(all_rows, key=lambda t: (t.txn_date, t.id), reverse=True)[:40]
+    recent = (
+        db.query(models.Transaction)
+        .filter(models.Transaction.user_id == user.id)
+        .order_by(models.Transaction.txn_date.desc(), models.Transaction.id.desc())
+        .limit(40)
+        .all()
+    )
+    expense_categories = {
+        row[0] for row in (
+            db.query(models.Transaction.category)
+            .filter(models.Transaction.user_id == user.id, models.Transaction.kind == "expense")
+            .distinct()
+            .all()
+        )
+    }
 
-    return {
+    return money.json_numbers({
         "today": today.isoformat(),
         "month_in_focus": month,
         "month_in_focus_label": start.strftime("%B %Y"),
@@ -215,26 +219,27 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
         "totals": {
             "this_month": _totals(this_month),
             "previous_month": _totals(prev_month),
-            "all_time": _totals(all_rows),
-            "transaction_count": len(all_rows),
+            "all_time": _totals_from_sums(all_income, all_expense),
+            "transaction_count": all_count,
         },
         "net_worth": {
-            "investments_value": round(sum(i.current_value for i in investments), 2),
-            "investments_cost": round(sum(i.invested_amount for i in investments), 2),
-            "liabilities_outstanding": round(sum(l.outstanding_amount for l in liabilities), 2),
-            "net_worth": round(
-                sum(i.current_value for i in investments) - sum(l.outstanding_amount for l in liabilities), 2
+            "investments_value": money.number(money.total(i.current_value for i in investments)),
+            "investments_cost": money.number(money.total(i.invested_amount for i in investments)),
+            "liabilities_outstanding": money.number(money.total(l.outstanding_amount for l in liabilities)),
+            "net_worth": money.number(
+                money.total(i.current_value for i in investments)
+                - money.total(l.outstanding_amount for l in liabilities)
             ),
-            "monthly_emi_total": round(sum(l.monthly_emi or 0 for l in liabilities), 2),
+            "monthly_emi_total": money.number(money.total(l.monthly_emi for l in liabilities)),
         },
         "spend_by_category_this_month": (
-            [{"category": k, "spent": round(v, 2)} for k, v in sorted(spent.items(), key=lambda x: x[1], reverse=True)]
+            [{"category": k, "spent": money.number(v)} for k, v in sorted(spent.items(), key=lambda x: x[1], reverse=True)]
             # Categories the user does use but did not spend in this month are
             # listed explicitly at zero: a small model reads a missing row as
             # "pick another row" instead of "zero".
             + [
                 {"category": cat, "spent": 0.0}
-                for cat in sorted({t.category for t in all_rows if t.kind == "expense"} - set(spent))
+                for cat in sorted(expense_categories - set(spent))
             ]
         ),
         "budgets": [
@@ -242,9 +247,10 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
                 "id": b.id,
                 "category": b.category,
                 "month": b.month,
-                "limit": b.monthly_limit,
-                "spent": round(spent.get(b.category, 0), 2) if b.month == month else None,
-                "remaining": round(b.monthly_limit - spent.get(b.category, 0), 2) if b.month == month else None,
+                "limit": money.number(b.monthly_limit),
+                "spent": money.number(spent.get(b.category, money.ZERO)) if b.month == month else None,
+                "remaining": money.number(b.monthly_limit - spent.get(b.category, money.ZERO))
+                             if b.month == month else None,
             }
             for b in budgets[:30]
         ],
@@ -252,10 +258,10 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
             {
                 "id": g.id,
                 "name": g.name,
-                "target": g.target_amount,
-                "saved": g.saved_amount,
-                "remaining": round(g.target_amount - g.saved_amount, 2),
-                "progress_pct": round((g.saved_amount / g.target_amount) * 100, 1) if g.target_amount else 0,
+                "target": money.number(g.target_amount),
+                "saved": money.number(g.saved_amount),
+                "remaining": money.number(g.target_amount - g.saved_amount),
+                "progress_pct": round(float(g.saved_amount / g.target_amount * 100), 1) if g.target_amount else 0,
                 "target_date": g.target_date.isoformat() if g.target_date else None,
             }
             for g in goals
@@ -265,9 +271,9 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
                 "id": i.id,
                 "name": i.name,
                 "type": i.asset_type,
-                "invested": i.invested_amount,
-                "current": i.current_value,
-                "gain": round(i.current_value - i.invested_amount, 2),
+                "invested": money.number(i.invested_amount),
+                "current": money.number(i.current_value),
+                "gain": money.number(i.current_value - i.invested_amount),
                 "notes": short(i.notes, 80),
             }
             for i in investments[:30]
@@ -277,8 +283,8 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
                 "id": l.id,
                 "name": l.name,
                 "type": l.liability_type,
-                "outstanding": l.outstanding_amount,
-                "emi": l.monthly_emi,
+                "outstanding": money.number(l.outstanding_amount),
+                "emi": money.number(l.monthly_emi),
                 "notes": short(l.notes, 80),
             }
             for l in liabilities[:30]
@@ -288,7 +294,7 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
                 "id": t.id,
                 "date": t.txn_date.isoformat(),
                 "kind": t.kind,
-                "amount": t.amount,
+                "amount": money.number(t.amount),
                 "category": t.category,
                 "description": t.description,
                 "method": t.payment_method,
@@ -325,12 +331,12 @@ def build_snapshot(db: Session, user, month: str | None = None) -> dict:
                 "title": j.title,
                 "category": j.category,
                 "mood": j.mood,
-                "amount": j.amount,
+                "amount": money.number(j.amount),
                 "description": short(j.description, 140),
             }
             for j in journal[:15]
         ],
-    }
+    })
 
 
 SYSTEM_RULES = """You are Nirvaah, the personal finance assistant inside the user's own app.
@@ -361,6 +367,29 @@ Rules:
 22. When a VERIFIED ANALYTICS block is present it is the only source for those figures: quote its numbers exactly, name the month, and never recalculate or blend it with the snapshot. If its STATUS is unknown_category, no_data or no_data_for_category, say plainly that you cannot see that data — never answer zero.
 23. CURRENT FOCUS names the record the conversation is about. "It", "that", "the same one", "make it high priority", "move it to Sunday" refer to it. If the new message names another record, ignore the focus and use the name.
 24. Matching: act only on a record whose name matches what the user said. If several records match, ask which one and return no actions. If none match, say you could not find it — never pick the closest row.
+25. When FACTS contains a "transactions" list, the user asked for the records themselves: list them, one per line, as "<date> — <description or category> — ₹<amount>". "total" is the database total for the whole filter — never add the rows up. If "truncated" is true, say the list shows "shown" of "count" records; if it is false, the list is complete.
+26. THREAD CONTEXT names the category and month carried from earlier turns. It is what the user is still asking about — but it is filters, not figures: every number comes from FACTS for the current turn, and an earlier total is never reused.
+28. Comparison FACTS list two categories with their totals, the absolute "difference", and "higher" (null when they are equal). Name both categories and the period, quote both totals and the difference exactly, and say which is higher or that they are equal. Never work out a difference or a winner yourself.
+
+27. Merchant FACTS carry "scope": either the category the query was filtered to, or "all categories". Lead with that scope. An all-category merchant lists its own "categories" — never call the whole total one category, and never present all-category merchants as belonging to the carried category.
+
+29. Category-ranking FACTS carry "scope" (a month like "2026-11", a year like "2026", or "all time"), the window's "total" and "count", and "categories" — the top "limit" ranks, each with its own "total", "count" and "share_pct". These ranks come from the database: answer "which category" with the first entry, name its total, then list the rest in order. Never re-sort, re-add or merge them, never call the window's total one category, and if STATUS is no_data say there is nothing in that period rather than quoting zero.
+
+30. Unusual-expense FACTS are database evidence: "<median> + MAD" gave each "anomalies" entry its "median" (the category's usual amount), "difference" and "ratio" (how many times the median it is), "z" and "history_count". Name the transaction's date and category, its amount, the usual amount and the ratio. STATUS ok with an empty "anomalies" list means nothing was unusually high — say exactly that. STATUS insufficient_history or a non-empty "categories_needing_history" means there is too little history to judge: say so and never call an amount unusual anyway. When a "probe" object is present the user named that amount: use its "unusual", "ratio" and "median" as given. Never compute your own baseline, threshold or z-score.
+
+31. Financial-health FACTS describe one period: "period" (start, end, request), "income", "expenses", "net_cash_flow", "counts", "top_categories" (at most three, expenses only), "biggest_expense" and "unusual". Name the period first, then give income, expenses and net cash flow exactly as returned — call it "net cash flow", never a balance or savings. List the top categories with their totals, name the biggest expense with its date and category, and mention unusual expenses only when "unusual.count" is above zero; if "unusual.status" is insufficient_history, say there is not enough history to judge. "counts" tells you whether a zero is real: if counts.income is 0 say no income was recorded. STATUS no_data means the period is empty — say so and quote no figures. Never judge whether the user is healthy, saving enough or overspending: the facts contain arithmetic, not advice.
+
+32. Task FACTS describe the task list for one window: "window", "today", "start", "end", "count", "buckets" (overdue, today, upcoming) and "tasks" rows carrying "due", "priority", "category" and "days_overdue" or "days_until". Name the window with its dates, give the returned count, and list the returned rows grouped overdue → today → upcoming. STATUS no_data means nothing matches that window — say so plainly and list nothing. Never invent a task, a date or a count, never recount tasks from the snapshot when these FACTS are present, and never say a reminder was scheduled or delivered: these are to-dos, not notifications.
+
+37. Insight FACTS are pre-computed observations, each with "severity", "message", "evidence", "task_ids" and a "recommended_action". Present them grouped critical → warning → info, quoting the numbers the message already contains and naming the task or count the evidence gives. Offer "recommended_action" as a suggestion for the user — never say you have already done it, never claim a reminder or alert was sent, and never imply you have been watching in the background. Mention a task once even if it appears in more than one insight. STATUS no_data means no significant insights were found — say exactly that instead of inventing one.
+
+36. Weekly-review FACTS cover the local week in "week_start" to "week_end" and its "sections": completed (this week), pending (only open tasks no other section lists), overdue, attention (with "attention_reasons" and, where relevant, "also_listed_in"), and upcoming (due in the next seven days). Open with the week's completions and their count, then state the currently pending and overdue counts — they are all-time open work, not this week's remainder — then name what is due soon. Mention any overlapping task once, using its strongest reason. If a section count is zero, say so plainly. Use only these figures: no completion percentage, no productivity score, no verdict on whether the week was good, and never call a task neglected because it is old.
+
+34. Completion-history FACTS describe finished work for one "period" with its "start" and "end" (local dates) and a "timezone"; rows carry "completed_at" as a UTC instant and the task's text, priority and category. State the period and the count first, then list the tasks with the date each was completed — never a date the data does not give. When "without_timestamp" is above zero, say that older completed tasks have no recorded completion date, so they cannot appear in date-based history. STATUS no_data means nothing was completed in that period.
+
+35. Progress FACTS mix two cohorts and say so in "scope": "completed_count" is for the requested period, while "pending_count", "overdue_count" and "total_count" describe right now, and "completed_all_time" is the all-time number. Report them separately and never turn them into a completion rate or percentage — the numerator and denominator are not the same set of tasks. Do not imply the pending tasks were created in that period.
+
+33. Attention FACTS are an ordered list with its reason: each row carries "attention_rank" and "attention_reasons" — "overdue by N days", "due today", "due tomorrow", "high priority", "open for N days". Present them in the order returned, say the reason the data gives for each one, and separate overdue from due soon. Call a task important only when its priority is high; a task that has simply been open a long time is "open for N days", never neglected. Never add urgency, ranking or a deadline of your own, never say a reminder was sent, and when STATUS is no_data say that nothing needs attention right now.
 
 Return ONE JSON object and nothing else:
 {"reply": "<your answer>", "actions": [ ... ]}
@@ -415,36 +444,6 @@ def system_prompt(user, snapshot: dict, memories: list[str] | None = None, turn:
     )
 
 
-# ── Ollama transport ────────────────────────────────────────────────────────
-
-def _post_json(url: str, payload: dict, timeout: float) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        return json.loads(res.read().decode("utf-8"))
-
-
-def ollama_chat(messages: list[dict]) -> str:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.2, "num_ctx": NUM_CTX},
-    }
-    try:
-        data = _post_json(f"{OLLAMA_URL}/api/chat", payload, OLLAMA_TIMEOUT)
-    except urllib.error.URLError as exc:
-        raise HTTPException(503, f"Assistant model is unreachable at {OLLAMA_URL} ({exc.reason}).") from exc
-    except TimeoutError as exc:
-        raise HTTPException(504, "The assistant model took too long to answer.") from exc
-    return ((data.get("message") or {}).get("content") or "").strip()
-
-
 def parse_model_output(raw: str) -> tuple[str, list[dict]]:
     """Be forgiving: the model may wrap the JSON in prose or a code fence."""
     raw = raw.strip()
@@ -473,114 +472,33 @@ def parse_model_output(raw: str) -> tuple[str, list[dict]]:
     return raw, []
 
 
-# ── record lookup ───────────────────────────────────────────────────────────
-
-def _lookup(db: Session, model, user, action: dict, name_field: str | None = None, label: str = "record"):
-    raw_id = action.get("id")
-    if raw_id not in (None, ""):
-        row = None
-        if model is models.Transaction or model in (models.Budget, models.Goal, models.Investment, models.Liability):
-            try:
-                row = db.get(model, int(raw_id))
-            except (TypeError, ValueError):
-                row = None
-        else:
-            row = db.get(model, str(raw_id))
-        if row is not None and row.user_id == user.id:
-            return row
-        raise ValueError(f"No {label} with id {raw_id} belongs to you.")
-
-    # No id: fall back to a unique name match so a small model can still act.
-    if name_field and action.get(name_field):
-        needle = str(action.get(name_field)).strip().lower()
-        rows = [r for r in db.query(model).filter(model.user_id == user.id).all()
-                if needle in str(getattr(r, name_field, "")).lower()]
-        if len(rows) == 1:
-            return rows[0]
-        if len(rows) > 1:
-            raise ValueError(f"More than one {label} matches \"{needle}\" — ask which one.")
-    raise ValueError(f"A {label} id is required.")
-
-
-def _describe_txn(t: models.Transaction) -> str:
-    return f"{t.txn_date.isoformat()} · {t.kind} {_inr(t.amount)} · {t.category}" + (f" · {t.description}" if t.description else "")
-
-
-# ── "Is this the record the user meant?" guard ──────────────────────────────
-# A small model asked to delete "Diwali clothes" will happily point at whatever
-# id it saw last. The id is only accepted when the record's own words overlap
-# the user's message; a request with no identifying words ("delete it") passes.
-
-STOPWORDS = {
-    "the", "and", "for", "with", "from", "that", "this", "these", "those", "delete", "remove",
-    "drop", "erase", "update", "change", "edit", "set", "make", "please", "can", "you", "your",
-    "my", "our", "now", "under", "into", "out", "its", "was", "were", "has", "have", "had",
-    "transaction", "transactions", "expense", "expenses", "income", "record", "entry", "entries",
-    "goal", "budget", "note", "notes", "task", "tasks", "journal", "investment", "liability",
-    "one", "some", "all", "just", "about", "need", "want", "would", "like", "then", "than",
-}
-
-
-def _content_tokens(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", str(text or "").lower()) if len(w) >= 3 and w not in STOPWORDS}
-
-
-def _identifying_text(row) -> str:
-    parts = []
-    for field in ("description", "category", "name", "title", "text", "notes", "body", "asset_type", "liability_type"):
-        value = getattr(row, field, None)
-        if isinstance(value, str) and value.strip():
-            parts.append(value)
-    return " ".join(parts).lower()
-
-
-def _guard_row(row, context: str, label: str):
-    tokens = _content_tokens(context)
-    if not tokens:
-        return
-    words = set(re.findall(r"[a-z0-9]+", _identifying_text(row)))
-    # Compare 5-character stems so "grocery" still matches "groceries".
-    stems = {w[:5] for w in words if len(w) >= 3}
-    for token in tokens:
-        if len(token) >= 5 and token[:5] in stems:
-            return
-        if token in words:
-            return
-    raise ValueError(
-        f"The {label} I found does not match \"{context.strip()}\" — nothing was changed. "
-        "Tell me the exact name, amount or date."
-    )
-
-
 # ── action execution ────────────────────────────────────────────────────────
 
 DELETE_OPS = {f"delete_{name}" for name in ("transaction", "budget", "goal", "investment", "liability", "note", "task", "journal")}
 
-GUARD_MODELS = {
-    "transaction": (models.Transaction, None),
-    "budget": (models.Budget, "category"),
-    "goal": (models.Goal, "name"),
-    "investment": (models.Investment, "name"),
-    "liability": (models.Liability, "name"),
-    "note": (models.Note, "title"),
-    "task": (models.Task, "text"),
-    "journal": (models.JournalEntry, "title"),
-}
-
 
 def guard_action(db: Session, user, action: dict, message: str) -> str | None:
-    """Refuse an action whose target does not match the words in the request.
+    """Refuse an action that the user's request does not support.
 
-    This is the second opinion on the model's choice of record, scored the same
-    way as `agent.resolve` so the two cannot disagree. A follow-up with no
-    identifying words of its own ("make it high priority") is allowed through —
-    the conversation's focus record decides what it means.
+    Two checks live here, both deterministic. A creation must be asked for in the
+    message itself (`authority.authorize_creation`) — a model must never turn a
+    question into a write. An update or delete must target a record whose name
+    matches the words in the request, scored the same way as `agent.resolve` so
+    the two cannot disagree. A follow-up with no identifying words of its own
+    ("make it high priority") is allowed through — the conversation's focus
+    record decides what it means.
     """
     from .agent import resolve as _resolve
 
     op = str(action.get("op") or "")
-    if not message or op.startswith("add_"):
+    if not message:
         return None
+    if op == "remember" or op.startswith("remember_"):
+        from .agent.authority import authorize_memory
+        return authorize_memory(message)
+    if op.startswith("add_"):
+        from .agent.authority import authorize_creation
+        return authorize_creation(op, message)
     kind = op.split("_", 1)[1] if "_" in op else ""
     if kind not in _resolve.ENTITIES:
         return None
@@ -602,332 +520,6 @@ def guard_action(db: Session, user, action: dict, message: str) -> str | None:
         return None
     return (f'The {label} I found does not match "{message.strip()}" — nothing was changed. '
             f"Tell me the exact name, amount or date.")
-
-
-def execute_action(db: Session, user, action: dict, dry_run: bool = False) -> dict:
-    """Backwards-compatible wrapper around the verified executor.
-
-    Old callers keep the {"op","ok","summary","id"} keys; the result also carries
-    success/verified/changes so a caller can tell a real write from an intention.
-    """
-    from .agent import execution
-
-    return execution.execute(db, user, action, dry_run=dry_run)
-
-
-def _legacy_execute_action(db: Session, user, action: dict, dry_run: bool = False) -> dict:
-    op = str(action.get("op") or "").strip()
-    out = {"op": op, "ok": False, "summary": "", "id": None}
-    try:
-        if op == "remember":
-            fact = _text(action, "fact") or _text(action, "text")
-            if not fact:
-                raise ValueError("Nothing to remember.")
-            if dry_run:
-                db.rollback()
-            else:
-                db.add(models.MemoryFact(user_id=user.id, fact=fact[:400], source=_text(action, "source")[:160]))
-                db.commit()
-            out.update(ok=True, summary=f"Remembered: {fact[:140]}")
-
-        elif op in ("add_transaction", "update_transaction"):
-            if op == "add_transaction":
-                kind = _text(action, "kind", "expense").lower()
-                if kind not in ("income", "expense"):
-                    raise ValueError("kind must be income or expense")
-                row = models.Transaction(user_id=user.id, kind=kind)
-                db.add(row)
-                amount = _num(action, "amount")
-                if amount <= 0:
-                    raise ValueError("A transaction needs an amount greater than zero.")
-                fields = {
-                    "amount": amount,
-                    "category": _text(action, "category", "Other") or "Other",
-                    "description": _text(action, "description"),
-                    "payment_method": _text(action, "payment_method", "SBI") or "SBI",
-                    "txn_date": _date(action, "txn_date", date.today()),
-                }
-            else:
-                row = _lookup(db, models.Transaction, user, action, label="transaction")
-                fields = {}
-                if "kind" in action:
-                    kind = _text(action, "kind").lower()
-                    if kind not in ("income", "expense"):
-                        raise ValueError("kind must be income or expense")
-                    fields["kind"] = kind
-                if "amount" in action:
-                    fields["amount"] = _num(action, "amount")
-                for key in ("category", "description", "payment_method"):
-                    if key in action:
-                        fields[key] = _text(action, key)
-                if "txn_date" in action:
-                    fields["txn_date"] = _date(action, "txn_date")
-                if not fields:
-                    raise ValueError("Nothing to change on that transaction.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit()
-                db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_transaction' else 'Updated'} transaction {row.kind} {_inr(row.amount)} · {row.category} · {row.txn_date.isoformat()}")
-
-        elif op in ("add_budget", "update_budget"):
-            if op == "add_budget":
-                row = models.Budget(user_id=user.id)
-                db.add(row)
-                fields = {
-                    "category": _text(action, "category") or "Other",
-                    "monthly_limit": _num(action, "monthly_limit"),
-                    "month": _month(action),
-                }
-            else:
-                row = _lookup(db, models.Budget, user, action, name_field="category", label="budget")
-                fields = {}
-                if "monthly_limit" in action:
-                    fields["monthly_limit"] = _num(action, "monthly_limit")
-                if "category" in action:
-                    fields["category"] = _text(action, "category")
-                if "month" in action:
-                    fields["month"] = _month(action)
-                if not fields:
-                    raise ValueError("Nothing to change on that budget.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_budget' else 'Updated'} budget {row.category} {_inr(row.monthly_limit)} for {row.month}")
-
-        elif op in ("add_goal", "update_goal"):
-            if op == "add_goal":
-                row = models.Goal(user_id=user.id)
-                db.add(row)
-                fields = {
-                    "name": _text(action, "name") or "Goal",
-                    "target_amount": _num(action, "target_amount"),
-                    "saved_amount": _num(action, "saved_amount", 0),
-                    "target_date": _date(action, "target_date", None),
-                }
-            else:
-                row = _lookup(db, models.Goal, user, action, name_field="name", label="goal")
-                fields = {}
-                if "name" in action:
-                    fields["name"] = _text(action, "name")
-                if "target_amount" in action:
-                    fields["target_amount"] = _num(action, "target_amount")
-                if "saved_amount" in action:
-                    fields["saved_amount"] = _num(action, "saved_amount")
-                if "target_date" in action:
-                    fields["target_date"] = _date(action, "target_date", None)
-                if not fields:
-                    raise ValueError("Nothing to change on that goal.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_goal' else 'Updated'} goal {row.name} {_inr(row.saved_amount)} of {_inr(row.target_amount)}")
-
-        elif op in ("add_investment", "update_investment"):
-            if op == "add_investment":
-                row = models.Investment(user_id=user.id)
-                db.add(row)
-                fields = {
-                    "name": _text(action, "name") or "Investment",
-                    "asset_type": _text(action, "asset_type", "Mutual Fund") or "Mutual Fund",
-                    "invested_amount": _num(action, "invested_amount", 0),
-                    "current_value": _num(action, "current_value", _num(action, "invested_amount", 0)),
-                    "notes": _text(action, "notes"),
-                }
-            else:
-                row = _lookup(db, models.Investment, user, action, name_field="name", label="investment")
-                fields = {}
-                for key in ("name", "asset_type", "notes"):
-                    if key in action:
-                        fields[key] = _text(action, key)
-                for key in ("invested_amount", "current_value"):
-                    if key in action:
-                        fields[key] = _num(action, key)
-                if not fields:
-                    raise ValueError("Nothing to change on that investment.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_investment' else 'Updated'} investment {row.name} at {_inr(row.current_value)}")
-
-        elif op in ("add_liability", "update_liability"):
-            if op == "add_liability":
-                row = models.Liability(user_id=user.id)
-                db.add(row)
-                fields = {
-                    "name": _text(action, "name") or "Liability",
-                    "liability_type": _text(action, "liability_type", "Loan") or "Loan",
-                    "outstanding_amount": _num(action, "outstanding_amount", 0),
-                    "monthly_emi": _num(action, "monthly_emi", 0),
-                    "notes": _text(action, "notes"),
-                }
-            else:
-                row = _lookup(db, models.Liability, user, action, name_field="name", label="liability")
-                fields = {}
-                for key in ("name", "liability_type", "notes"):
-                    if key in action:
-                        fields[key] = _text(action, key)
-                for key in ("outstanding_amount", "monthly_emi"):
-                    if key in action:
-                        fields[key] = _num(action, key)
-                if not fields:
-                    raise ValueError("Nothing to change on that liability.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_liability' else 'Updated'} liability {row.name} {_inr(row.outstanding_amount)} outstanding")
-
-        elif op in ("add_note", "update_note"):
-            if op == "add_note":
-                row = models.Note(id=str(action.get("id") or __import__("uuid").uuid4()), user_id=user.id)
-                db.add(row)
-                fields = {
-                    "title": _text(action, "title") or "Untitled note",
-                    "body": _text(action, "body"),
-                    "category": _text(action, "category", "Personal") or "Personal",
-                    "tags": _tags(action),
-                }
-            else:
-                row = _lookup(db, models.Note, user, action, name_field="title", label="note")
-                fields = {}
-                for key in ("title", "body", "category"):
-                    if key in action:
-                        fields[key] = _text(action, key)
-                if "tags" in action:
-                    fields["tags"] = _tags(action)
-                if not fields:
-                    raise ValueError("Nothing to change on that note.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            row.updated_at = datetime.utcnow()
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_note' else 'Updated'} note \"{row.title}\"")
-
-        elif op in ("add_task", "update_task"):
-            if op == "add_task":
-                row = models.Task(id=str(action.get("id") or __import__("uuid").uuid4()), user_id=user.id)
-                db.add(row)
-                fields = {
-                    "text": _text(action, "text") or _text(action, "title") or "Task",
-                    "notes": _text(action, "notes"),
-                    "priority": (_text(action, "priority", "medium") or "medium").lower(),
-                    "category": _text(action, "category", "Personal") or "Personal",
-                    "due": _date(action, "due", None),
-                }
-            else:
-                row = _lookup(db, models.Task, user, action, name_field="text", label="task")
-                fields = {}
-                if "text" in action:
-                    fields["text"] = _text(action, "text")
-                if "notes" in action:
-                    fields["notes"] = _text(action, "notes")
-                if "done" in action:
-                    fields["done"] = bool(action.get("done"))
-                if "priority" in action:
-                    fields["priority"] = (_text(action, "priority") or "medium").lower()
-                if "category" in action:
-                    fields["category"] = _text(action, "category")
-                if "due" in action:
-                    fields["due"] = _date(action, "due", None)
-                if not fields:
-                    raise ValueError("Nothing to change on that task.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            row.updated_at = datetime.utcnow()
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_task' else 'Updated'} task \"{row.text}\"" + (" (done)" if row.done else ""))
-
-        elif op in ("add_journal", "update_journal"):
-            if op == "add_journal":
-                row = models.JournalEntry(id=str(action.get("id") or __import__("uuid").uuid4()), user_id=user.id)
-                db.add(row)
-                fields = {
-                    "title": _text(action, "title") or "Journal entry",
-                    "description": _text(action, "description"),
-                    "category": _text(action, "category", "Life") or "Life",
-                    "mood": (_text(action, "mood", "steady") or "steady").lower(),
-                    "amount": _num(action, "amount", None) if action.get("amount") not in (None, "") else None,
-                    "event_date": _date(action, "date", date.today()),
-                    "tags": _tags(action),
-                }
-            else:
-                row = _lookup(db, models.JournalEntry, user, action, name_field="title", label="journal entry")
-                fields = {}
-                for key in ("title", "description", "category", "mood"):
-                    if key in action:
-                        fields[key] = _text(action, key)
-                if action.get("amount") not in (None, ""):
-                    fields["amount"] = _num(action, "amount")
-                if "date" in action or "event_date" in action:
-                    fields["event_date"] = _date(action, "date" if "date" in action else "event_date")
-                if "tags" in action:
-                    fields["tags"] = _tags(action)
-                if not fields:
-                    raise ValueError("Nothing to change on that journal entry.")
-            for key, value in fields.items():
-                setattr(row, key, value)
-            row.updated_at = datetime.utcnow()
-            if dry_run:
-                db.rollback()
-            else:
-                db.commit(); db.refresh(row)
-            out.update(ok=True, id=row.id, summary=f"{'Added' if op == 'add_journal' else 'Updated'} journal entry \"{row.title}\"")
-
-        elif op in DELETE_OPS:
-            kind = op[len("delete_"):]
-            model, name_field, describe = {
-                "transaction": (models.Transaction, None, lambda r: _describe_txn(r)),
-                "budget": (models.Budget, "category", lambda r: f"budget {r.category} {_inr(r.monthly_limit)} for {r.month}"),
-                "goal": (models.Goal, "name", lambda r: f"goal \"{r.name}\" ({_inr(r.saved_amount)} saved of {_inr(r.target_amount)})"),
-                "investment": (models.Investment, "name", lambda r: f"investment \"{r.name}\" worth {_inr(r.current_value)}"),
-                "liability": (models.Liability, "name", lambda r: f"liability \"{r.name}\" ({_inr(r.outstanding_amount)} outstanding)"),
-                "note": (models.Note, "title", lambda r: f"note \"{r.title}\""),
-                "task": (models.Task, "text", lambda r: f"task \"{r.text}\""),
-                "journal": (models.JournalEntry, "title", lambda r: f"journal entry \"{r.title}\" on {r.event_date.isoformat() if r.event_date else 'no date'}"),
-            }[kind]
-            row = _lookup(db, model, user, action, name_field=name_field, label=kind)
-            target = describe(row)
-            if dry_run:
-                out.update(ok=True, id=row.id, summary=f"Delete {target}", pending=True)
-                return out
-            if model is models.Transaction:
-                db.delete(row)
-            else:
-                db.add(models.Deletion(id=row.id, user_id=user.id, kind=kind))
-                db.delete(row)
-            db.commit()
-            out.update(ok=True, id=row.id, summary=f"Deleted {target}")
-
-        else:
-            raise ValueError(f"Unknown action \"{op}\".")
-    except ValueError as exc:
-        db.rollback()
-        out["error"] = str(exc)
-    except Exception as exc:  # noqa: BLE001 — one bad action must not kill the turn
-        db.rollback()
-        out["error"] = f"{type(exc).__name__}: {exc}"
-    return out
 
 
 from .agent.reply import clean_reply  # noqa: E402  (re-exported for the graph)

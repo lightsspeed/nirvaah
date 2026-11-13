@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,10 +13,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..ai import DELETE_OPS, execute_action
+from ..ai import DELETE_OPS
+from ..timeutil import utcnow
 from . import execution, focus as focus_mod, obs
+from .credentials import credential_kind, refusal as credential_refusal
 from ..database import get_db
 from ..security import get_current_user
+from ..timeutil import iso_utc
+from ..tz import user_timezone, user_today
 from . import graph, providers
 
 router = APIRouter(prefix="/api/chat", tags=["assistant"])
@@ -45,7 +49,12 @@ def _message_out(m: models.ChatMessage) -> dict:
         "steps": meta.get("steps", []),
         "degraded": meta.get("degraded", ""),
         "note": meta.get("note", ""),
-        "at": m.created_at.isoformat() if m.created_at else None,
+        # A turn can fail after a write committed; say so rather than implying a
+        # clean turn (Task 27.6.2). The error is a classification, never a trace.
+        "graph_error": meta.get("graph_error", ""),
+        "partial": meta.get("partial", False),
+        "uncertain": meta.get("uncertain", False),
+        "at": iso_utc(m.created_at),
     }
 
 
@@ -55,13 +64,35 @@ def _conversation_out(c: models.Conversation, count: int = 0) -> dict:
         "title": c.title,
         "provider": c.provider,
         "messages": count,
-        "created_at": c.created_at.isoformat() if c.created_at else None,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        "created_at": iso_utc(c.created_at),
+        "updated_at": iso_utc(c.updated_at),
     }
 
 
 class ConversationIn(BaseModel):
     title: str = ""
+
+
+def _last_analytics_context(prior: list[models.ChatMessage]) -> dict | None:
+    """The most recent turn's analytics filters, if this conversation had one.
+
+    The newest assistant message wins even when it recorded "no context": that
+    is how an explicit "overall" clears an old topic instead of resurrecting it.
+    """
+    for message in reversed(prior):
+        if message.role != "assistant":
+            continue
+        try:
+            meta = json.loads(message.meta or "{}")
+        except ValueError:
+            continue
+        if not isinstance(meta, dict):
+            # Valid JSON but not our metadata shape — ignore it, never fail a turn.
+            continue
+        if "analytics" in meta:
+            context = meta["analytics"]
+            return context if isinstance(context, dict) else None
+    return None
 
 
 class MessageIn(BaseModel):
@@ -144,6 +175,11 @@ def rename_conversation(conversation_id: str, data: ConversationIn, db: Session 
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
     row = _conversation(db, user, conversation_id)
+    # chat_focus points at the conversation with no ON DELETE action, so the focus
+    # row has to go in the same transaction; Postgres otherwise rejects the delete
+    # and the conversation can never be removed. focus_mod.clear() commits on its
+    # own, which would split the delete, so the rows are removed here directly.
+    db.query(models.ChatFocus).filter(models.ChatFocus.conversation_id == row.id).delete()
     db.query(models.ChatMessage).filter(models.ChatMessage.conversation_id == row.id).delete()
     db.delete(row)
     db.commit()
@@ -163,7 +199,9 @@ def list_messages(conversation_id: str, db: Session = Depends(get_db), user=Depe
 
 
 @router.post("/conversations/{conversation_id}/messages")
-def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(get_db),
+                 user=Depends(get_current_user), today: date = Depends(user_today),
+                 timezone_name: str | None = Depends(user_timezone)):
     conversation = _conversation(db, user, conversation_id)
     text = (data.message or "").strip()
     if not text:
@@ -176,6 +214,10 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         .all()
     )
     history = [{"role": m.role, "content": m.content} for m in prior if m.content]
+    chat_context = _last_analytics_context(prior)
+    # Count replies, not messages: a failed turn leaves a user message behind and
+    # must not advance the thread's turn number (or its expiry clock).
+    turn = sum(1 for m in prior if m.role == "assistant") + 1
 
     db.add(models.ChatMessage(
         conversation_id=conversation_id, user_id=user.id, role="user", content=text, meta="{}",
@@ -183,7 +225,9 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     db.commit()
 
     try:
-        result = graph.run_turn(db, user, conversation_id, text, history, turn=len(prior) // 2 + 1, prefer=(data.prefer or "").strip()[:80])
+        result = graph.run_turn(db, user, conversation_id, text, history, turn=turn,
+                                prefer=(data.prefer or "").strip()[:80], today=today,
+                                chat_context=chat_context)
     except providers.ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
 
@@ -192,17 +236,24 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     pending = result.get("pending", [])
     failed = result.get("failed", [])
 
-    # Keep the fact even when the model forgot to emit the remember action.
-    if not any(a.get("op") == "remember" for a in applied + pending):
-        fact = _memory_request(text)
+    # The model sometimes forgets the remember action. Only a message that asks
+    # for a fact to be kept qualifies, and the write goes through the same
+    # verified path as every other memory (Task 27.6.3).
+    if not any(a.get("op") == "remember" for a in applied + pending + failed):
+        from .authority import authorize_memory
+        fact = _memory_request(text) if authorize_memory(text) is None else None
         if fact:
-            row = models.MemoryFact(user_id=user.id, fact=fact, source="conversation")
-            db.add(row)
-            db.commit()
-            applied.append({"op": "remember", "ok": True, "summary": f"Remembered: {fact}"})
-            if not reply or "could not put that into words" in reply:
-                reply = "Noted — I'll remember that."
+            remembered = execution.execute(db, user, {"op": "remember", "fact": fact},
+                                           context={"today": today})
+            if remembered.get("success"):
+                applied.append(remembered)
+                if not reply or "could not put that into words" in reply:
+                    reply = "Noted — I'll remember that."
+            else:
+                failed.append(remembered)
+                reply = remembered.get("error") or reply
 
+    uncertain_result = any(r.get("uncertain") for r in applied + pending + failed)
     meta = {
         "applied": applied,
         "pending": pending,
@@ -211,7 +262,15 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         "steps": result.get("steps", []),
         "degraded": result.get("degraded", ""),
         "note": result.get("note", ""),
+        "graph_error": result.get("graph_error", ""),
+        "partial": bool(result.get("partial")),
+        "uncertain": bool(result.get("uncertain")) or uncertain_result,
     }
+    # Filters only: the next request inherits them and re-queries every figure.
+    # A merchant or listing turn may carry only its intent, which is what a later
+    # "what about June?" needs; an empty dict is an explicit reset.
+    settled = result.get("chat_context")
+    meta["analytics"] = settled if isinstance(settled, dict) and settled else None
     assistant = models.ChatMessage(
         conversation_id=conversation_id,
         user_id=user.id,
@@ -223,14 +282,14 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     db.add(assistant)
 
     conversation.provider = result.get("provider", "")
-    conversation.updated_at = datetime.utcnow()
+    conversation.updated_at = utcnow()
     if conversation.title in ("", "New conversation"):
         first = text.split()
         conversation.title = " ".join(first[:7])[:160] + ("…" if len(first) > 7 else "")
     db.commit()
     db.refresh(assistant)
 
-    obs.event("turn_end", conversation_id=conversation_id, turn=len(prior) // 2 + 1,
+    obs.event("turn_end", conversation_id=conversation_id, turn=turn,
               applied=len(applied), pending=len(pending), failed=len(failed),
               verified=meta["verified"], runner=result.get("runner", ""),
               provider=result.get("provider", ""))
@@ -243,15 +302,17 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
 
 
 @router.post("/conversations/{conversation_id}/confirm")
-def confirm_deletes(conversation_id: str, data: ConfirmIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def confirm_deletes(conversation_id: str, data: ConfirmIn, db: Session = Depends(get_db),
+                    user=Depends(get_current_user), today: date = Depends(user_today)):
     _conversation(db, user, conversation_id)
+    context = {"today": today}
     applied, failed = [], []
     for action in (data.actions or [])[:10]:
         if action.get("op") not in DELETE_OPS:
             failed.append({"op": action.get("op"), "ok": False, "success": False, "verified": False,
                            "summary": "Only deletions need confirming."})
             continue
-        result = execution.execute(db, user, action)
+        result = execution.execute(db, user, action, context=context)
         obs.event("tool_call", conversation_id=conversation_id, tool=result.get("operation"),
                   entity_type=result.get("entity_type"), entity_id=result.get("entity_id"),
                   status="ok" if result.get("success") else "failed",
@@ -285,7 +346,7 @@ def list_memories(db: Session = Depends(get_db), user=Depends(get_current_user))
         .all()
     )
     return [
-        {"id": r.id, "fact": r.fact, "at": r.created_at.isoformat() if r.created_at else None}
+        {"id": r.id, "fact": r.fact, "at": iso_utc(r.created_at)}
         for r in rows
     ]
 
@@ -295,11 +356,17 @@ def add_memory(data: MemoryIn, db: Session = Depends(get_db), user=Depends(get_c
     fact = (data.fact or "").strip()
     if not fact:
         raise HTTPException(400, "Nothing to remember.")
+    # Same guard as the assistant path: memories are replayed into prompts.
+    kind = credential_kind(fact)
+    if kind:
+        obs.inc("memory_credential_refused")
+        obs.event("memory_credential_refused", kind=kind)
+        raise HTTPException(400, credential_refusal(kind))
     row = models.MemoryFact(user_id=user.id, fact=fact[:400], source="manual")
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {"id": row.id, "fact": row.fact, "at": row.created_at.isoformat() if row.created_at else None}
+    return {"id": row.id, "fact": row.fact, "at": iso_utc(row.created_at)}
 
 
 @router.delete("/memories/{memory_id}")
