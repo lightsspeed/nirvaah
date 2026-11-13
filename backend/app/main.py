@@ -1,10 +1,14 @@
 import json
+import math
 import os
 import uuid
 from datetime import date, timedelta
 from calendar import monthrange
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -21,6 +25,29 @@ APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 app = FastAPI(title="Nirvaah API", version=APP_VERSION)
 app.include_router(assistant_router)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+def _json_safe(value):
+    """A JSON-encodable copy of a payload, with non-finite floats written as text.
+
+    A rejected request is echoed back in ``detail[].input``. Python parses ``NaN``
+    and ``Infinity`` in a JSON body, but refuses to encode them again, which turned
+    a correct 422 into a 500. The amount was already refused; this only makes the
+    refusal serialisable.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request, exc):
+    return JSONResponse(status_code=422, content={"detail": _json_safe(jsonable_encoder(exc.errors()))})
+
 
 def owned(db, model, item_id, user):
     item = db.query(model).filter(model.id == item_id, model.user_id == user.id).first()

@@ -24,17 +24,21 @@ from typing import Any
 
 
 CENT = Decimal("0.01")
+HALF_CENT = Decimal("0.005")         # anything at or beyond this rounds out of range
 ZERO = Decimal("0.00")
 MAX = Decimal("999999999999.99")     # numeric(14,2) ceiling
 MIN = Decimal("-999999999999.99")
+# Past this the decimal context cannot quantise to paise at all, so the value is
+# refused as an amount instead of surfacing decimal.InvalidOperation.
+QUANTISE_CEILING = Decimal("1E+26")
 
 
 class MoneyError(ValueError):
     """A value that cannot be stored as money."""
 
 
-def _quantise(value: Any) -> Decimal | None:
-    """Parse and quantise to paise with ROUND_HALF_UP; None means "no value"."""
+def _parse(value: Any) -> Decimal | None:
+    """Read a value as a finite Decimal without rounding; None means "no value"."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, bool):
@@ -45,7 +49,21 @@ def _quantise(value: Any) -> Decimal | None:
         raise MoneyError(f"{value!r} is not a monetary amount") from exc
     if not amount.is_finite():
         raise MoneyError("amount must be a finite number")
-    return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+    return amount
+
+
+def _quantise(value: Any) -> Decimal | None:
+    """Parse and quantise to paise with ROUND_HALF_UP; None means "no value"."""
+    amount = _parse(value)
+    if amount is None:
+        return None
+    if abs(amount) >= QUANTISE_CEILING:
+        raise MoneyError(f"{value!r} is too large to be an amount")
+    try:
+        return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError) as exc:
+        # Never let a decimal-context error escape as a 500; it is bad input.
+        raise MoneyError(f"{value!r} is not a representable amount") from exc
 
 
 def to_money(value: Any, *, default: Decimal | None = None) -> Decimal | None:
@@ -68,9 +86,14 @@ def require_money(value: Any, *, field: str = "amount", positive: bool = False,
     ``positive=True`` is the transaction/budget/limit case: the amount must still
     be greater than zero *after* quantisation, which is what rejects 0.004.
     """
-    amount = to_money(value, default=None)
-    if amount is None:
+    raw = _parse(value)
+    if raw is None:
         raise MoneyError(f"{field} is required")
+    # Refuse what cannot round into the column before rounding it: a value at or
+    # beyond MAX+0.005 rounds up and out of range, so it is rejected as given.
+    if abs(raw) >= maximum + HALF_CENT:
+        raise MoneyError(f"{field} must be between -{maximum} and {maximum}")
+    amount = _quantise(raw)
     if amount > maximum or amount < -maximum:
         raise MoneyError(f"{field} must be between -{maximum} and {maximum}")
     if positive and amount <= ZERO:

@@ -95,9 +95,12 @@ def pending(engine: Engine, directory: Path | None = None) -> list[Path]:
 def apply(engine: Engine, directory: Path | None = None) -> list[str]:
     """Apply pending migrations atomically; returns the versions applied now."""
     with engine.begin() as conn:
-        _ensure_bookkeeping(conn)
+        # Lock first: two runners starting together would otherwise race to create
+        # the bookkeeping table itself and the loser would die on a duplicate type.
+        # The lock is transaction-scoped, so it covers the DDL below as well.
         if engine.dialect.name == "postgresql":
             conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK_KEY})
+        _ensure_bookkeeping(conn)
         done = {row[0] for row in conn.execute(text("SELECT version FROM schema_migrations"))}
         dialect = engine.dialect.name
         todo = [p for p in available(directory)

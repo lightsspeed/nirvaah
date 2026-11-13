@@ -10,7 +10,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 
-from ..money import ZERO, MoneyError, to_money
+from ..money import ZERO, MoneyError, number, to_money
 
 
 def money(value) -> Decimal:
@@ -78,13 +78,20 @@ def tags(payload: dict):
 
 
 def as_plain(value):
-    """A comparable, JSON-safe form of a model attribute."""
+    """A comparable, JSON-safe form of a model attribute.
+
+    Money keeps its JSON type: a Decimal or float amount comes back as a number
+    through the shared money utility, never as the string ``str(Decimal)`` would
+    produce, so ``changes`` in an assistant reply matches the rest of the API.
+    """
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds")
     if isinstance(value, date):
         return value.isoformat()
-    if isinstance(value, float):
-        return round(value, 2)
-    if isinstance(value, bool) or value is None or isinstance(value, str):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (Decimal, float, int)):
+        return number(value)
+    if value is None or isinstance(value, str):
         return value
     return str(value)

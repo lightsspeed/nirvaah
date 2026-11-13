@@ -237,7 +237,9 @@ def _journal_fields(action: dict, *, creating: bool, context: dict | None = None
         fields["description"] = text(action, "description")
         fields["category"] = text(action, "category", "Life") or "Life"
         fields["mood"] = (text(action, "mood", "steady") or "steady").lower()
-        fields["amount"] = num(action, "amount", None) if action.get("amount") not in (None, "") else None
+        # Nullable, but quantised like every other amount the app stores.
+        fields["amount"] = (None if action.get("amount") in (None, "")
+                            else to_money(num(action, "amount")))
         fields["event_date"] = date_value(action, "date", _business_today(context))
         fields["tags"] = tags(action)
         return fields
@@ -245,7 +247,7 @@ def _journal_fields(action: dict, *, creating: bool, context: dict | None = None
         if key in action:
             fields[key] = text(action, key)
     if action.get("amount") not in (None, ""):
-        fields["amount"] = num(action, "amount")
+        fields["amount"] = to_money(num(action, "amount"))
     if "date" in action or "event_date" in action:
         fields["event_date"] = date_value(action, "date" if "date" in action else "event_date")
     if "tags" in action:

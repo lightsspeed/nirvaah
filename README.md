@@ -148,6 +148,23 @@ run at all if any amount is NaN, infinite, wider than `numeric(14,2)`, or a
 positive-only column that would round to `0.00`, then converts all nine money
 columns and adds a CHECK constraint to each.
 
+### Recovering a lost migration record
+
+The runner never guesses whether a migration is applied. If `schema_migrations` is
+missing a row for DDL that is already in the database — a restore from an older
+dump, or a script run by hand — that file fails with `already exists` and the
+version stays unrecorded, so it fails the same way on every run. Confirm the
+objects are present, then record the version deliberately:
+
+```sql
+SELECT conname FROM pg_constraint WHERE conname LIKE '%\_range' ORDER BY conname;
+-- the nine CHECK constraints are there, so 0002 has run
+INSERT INTO schema_migrations (version) VALUES ('0002_money_numeric_14_2.sql');
+```
+
+Skipping a migration because its objects happen to exist is never done for you:
+existence is not evidence that the DDL finished.
+
 ## Money
 
 Money is stored as `numeric(14,2)` and handled as Python `Decimal` — never a
