@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..timeutil import utcnow
 from . import obs
 from . import resolve as resolver
 from .fields import as_plain, date_value, inr, month, num, tags, text
@@ -354,7 +355,7 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
         for key, value in fields.items():
             setattr(row, key, value)
         if hasattr(row, "updated_at"):
-            row.updated_at = __import__("datetime").datetime.utcnow()
+            row.updated_at = utcnow()
         db.add(row)
         error = _commit(db, op, kind)
         if error:
@@ -438,7 +439,7 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     for key, value in fields.items():
         setattr(row, key, value)
     if hasattr(row, "updated_at"):
-        row.updated_at = __import__("datetime").datetime.utcnow()
+        row.updated_at = utcnow()
 
     error = _commit(db, op, kind)
     if error:

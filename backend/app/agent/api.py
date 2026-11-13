@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..ai import DELETE_OPS
+from ..timeutil import utcnow
 from . import execution, focus as focus_mod, obs
 from ..database import get_db
 from ..security import get_current_user
@@ -223,7 +223,7 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     db.add(assistant)
 
     conversation.provider = result.get("provider", "")
-    conversation.updated_at = datetime.utcnow()
+    conversation.updated_at = utcnow()
     if conversation.title in ("", "New conversation"):
         first = text.split()
         conversation.title = " ".join(first[:7])[:160] + ("…" if len(first) > 7 else "")

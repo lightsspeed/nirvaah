@@ -9,11 +9,11 @@ or replaces the focus, so a change of topic cannot silently retarget an old one.
 from __future__ import annotations
 
 import re
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..timeutil import utcnow
 from . import obs
 
 # "it", "that", "this", "them", "the same one", "its due date"…
@@ -49,7 +49,7 @@ def set_focus(db: Session, user, conversation_id: str, *, entity_type: str, enti
     row.entity_id = str(entity_id)
     row.label = (label or "")[:255]
     row.operation = (operation or "")[:40]
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     try:
         db.commit()
     except Exception as exc:  # noqa: BLE001 - focus is a convenience, never fail a turn

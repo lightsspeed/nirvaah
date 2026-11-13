@@ -1,7 +1,7 @@
 import json
 import os
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from calendar import monthrange
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from .database import Base, engine, get_db
 from . import models, schemas
+from .timeutil import utcnow
 from .security import hash_password, verify_password, create_access_token, get_current_user
 from .agent.api import router as assistant_router
 
@@ -573,7 +574,7 @@ def upsert_note(payload: dict, db: Session = Depends(get_db), user=Depends(get_c
         row = models.Note(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
         db.add(row)
     _apply_note(row, payload)
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     db.commit(); db.refresh(row)
     return _note_out(row)
 
@@ -605,7 +606,7 @@ def upsert_task(payload: dict, db: Session = Depends(get_db), user=Depends(get_c
         row = models.Task(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
         db.add(row)
     _apply_task(row, payload)
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     db.commit(); db.refresh(row)
     return _task_out(row)
 
@@ -637,7 +638,7 @@ def upsert_journal(payload: dict, db: Session = Depends(get_db), user=Depends(ge
         row = models.JournalEntry(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
         db.add(row)
     _apply_journal(row, payload)
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
     db.commit(); db.refresh(row)
     return _journal_out(row)
 

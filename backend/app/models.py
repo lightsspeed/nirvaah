@@ -2,6 +2,7 @@ from datetime import date, datetime
 from sqlalchemy import String, Integer, Float, Date, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
+from .timeutil import utcnow
 
 class User(Base):
     __tablename__ = "users"
@@ -10,7 +11,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     currency: Mapped[str] = mapped_column(String(8), default="INR")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -22,7 +23,7 @@ class Transaction(Base):
     description: Mapped[str] = mapped_column(String(255), default="")
     payment_method: Mapped[str] = mapped_column(String(40), default="SBI")
     txn_date: Mapped[date] = mapped_column(Date, default=date.today)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 class Budget(Base):
     __tablename__ = "budgets"
@@ -75,8 +76,8 @@ class Note(Base):
     tags: Mapped[str] = mapped_column(Text, default="[]")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Task(Base):
@@ -89,8 +90,8 @@ class Task(Base):
     priority: Mapped[str] = mapped_column(String(12), default="medium")
     category: Mapped[str] = mapped_column(String(60), default="Personal")
     due: Mapped[date | None] = mapped_column(Date, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class JournalEntry(Base):
@@ -104,8 +105,8 @@ class JournalEntry(Base):
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     tags: Mapped[str] = mapped_column(Text, default="[]")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Deletion(Base):
@@ -115,7 +116,7 @@ class Deletion(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(12))
-    deleted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 # ── Assistant: conversations, turns and durable memory ──────────────────────
@@ -125,8 +126,8 @@ class Conversation(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(160), default="New conversation")
     provider: Mapped[str] = mapped_column(String(40), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ChatMessage(Base):
@@ -139,7 +140,7 @@ class ChatMessage(Base):
     provider: Mapped[str] = mapped_column(String(40), default="")
     # Applied / pending / failed actions for this turn, as JSON.
     meta: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class MemoryFact(Base):
@@ -150,7 +151,7 @@ class MemoryFact(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     fact: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(160), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ChatFocus(Base):
@@ -166,4 +167,4 @@ class ChatFocus(Base):
     entity_id: Mapped[str] = mapped_column(String(40), default="")
     label: Mapped[str] = mapped_column(String(255), default="")
     operation: Mapped[str] = mapped_column(String(40), default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
