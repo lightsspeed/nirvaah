@@ -92,6 +92,16 @@ def test_resolve_timezone_accepts_names_and_rejects_junk():
     assert timeutil.resolve_timezone("x" * 200) is None
 
 
+def test_browser_legacy_names_resolve(freeze):
+    """Chrome reports Asia/Calcutta, which Debian 13's tzdata no longer links."""
+    assert timeutil.resolve_timezone("Asia/Calcutta") is not None
+    assert timeutil.resolve_timezone("US/Pacific") is not None
+    assert timeutil.resolve_timezone("Europe/Kiev") is not None
+    freeze("2026-11-30T19:00:00Z")
+    assert timeutil.today_for_timezone("Asia/Calcutta") == date(2026, 12, 1)
+    assert user_today("Asia/Calcutta") == date(2026, 12, 1)  # no 400 for a real browser
+
+
 # ── the dependency ─────────────────────────────────────────────────────────
 
 

@@ -85,6 +85,46 @@ DOCKER_NAMESPACE=lightsspeed APP_VERSION=1.0.0 docker compose up -d
 (The compose services carry `image:` names, so `pull` fetches the published tags;
 `docker compose build` still produces them locally when you want to build.)
 
+### Rebuilding after a code change
+
+`docker compose up -d` **reuses whatever image is already tagged** — it does not
+notice that `src/` changed. That is how a stack ends up running month-old code
+with a green test suite. Rebuild whenever the source moves:
+
+```bash
+docker compose up -d --build            # rebuild the changed service(s), then restart
+docker compose build backend            # build only, leave the stack running
+docker compose up -d --force-recreate backend   # restart onto the new image
+```
+
+`--pull` refreshes the base images as well; the four bases are digest-pinned, so a
+plain build keeps using exactly the pinned image and `--pull` only matters after
+you bump a digest by hand:
+
+```bash
+docker compose build --pull             # after updating a FROM ...@sha256: line
+docker buildx imagetools inspect python:3.12-slim   # the digest to pin
+```
+
+### Which commit is this image?
+
+Every image carries OCI labels, so the question is one command:
+
+```bash
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    lightsspeed/nirvaah-backend:1.0.0
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    lightsspeed/nirvaah-frontend:1.0.0
+```
+
+Compare that to `git rev-parse HEAD`. `release.sh` fills the revision from the
+checkout it builds and the date from the build moment; CI passes the commit SHA;
+a bare local build records `unknown` rather than a guess. The labels also cover
+`source`, `version` and `created`.
+
+Nothing here deploys anything: `up` and `build` are local Docker only. Publishing
+is `release.sh`, which tags and pushes to the registry and stops there.
+
 ## Assistant reliability layer
 
 The assistant is structured so that nothing it says can get ahead of the

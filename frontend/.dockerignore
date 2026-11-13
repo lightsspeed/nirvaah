@@ -1,0 +1,16 @@
+# Build context for the production frontend image.
+#
+# `COPY . .` must never carry the developer's machine into the image: a host
+# node_modules holds platform-specific binaries (esbuild/rollup), and copying it
+# over the `npm ci` install breaks the Linux build. dist/ and the backup folder
+# are stale artefacts; .env* would leak configuration into the layer cache.
+node_modules/
+dist/
+tests/
+nirvaah-brand-kit-v2/
+.src-backup-*/
+*.log
+.env
+.env.*
+Dockerfile
+.dockerignore

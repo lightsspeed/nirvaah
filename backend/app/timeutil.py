@@ -44,6 +44,34 @@ def utcnow() -> datetime:
     return _utc_now().replace(tzinfo=None)
 
 
+#: IANA names that browsers still report but modern tzdata keeps only in its
+#: `backward` file. Debian 13 ships tzdata *without* that file, so ZoneInfo() cannot
+#: resolve them — and Chrome reports India as ``Asia/Calcutta``, not ``Asia/Kolkata``.
+#: Without this map a perfectly valid browser request is rejected as unknown.
+LEGACY_ALIASES = {
+    "Asia/Calcutta": "Asia/Kolkata",
+    "Asia/Katmandu": "Asia/Kathmandu",
+    "Asia/Rangoon": "Asia/Yangon",
+    "Asia/Saigon": "Asia/Ho_Chi_Minh",
+    "Asia/Dacca": "Asia/Dhaka",
+    "Asia/Thimbu": "Asia/Thimphu",
+    "Asia/Chongqing": "Asia/Shanghai",
+    "Asia/Chungking": "Asia/Shanghai",
+    "Asia/Harbin": "Asia/Shanghai",
+    "Asia/Macao": "Asia/Macau",
+    "Asia/Ulan_Bator": "Asia/Ulaanbaatar",
+    "Europe/Kiev": "Europe/Kyiv",
+    "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+    "America/Godthab": "America/Nuuk",
+    "Pacific/Ponape": "Pacific/Pohnpei",
+    "Pacific/Truk": "Pacific/Chuuk",
+    "US/Eastern": "America/New_York",
+    "US/Central": "America/Chicago",
+    "US/Mountain": "America/Denver",
+    "US/Pacific": "America/Los_Angeles",
+}
+
+
 def resolve_timezone(name: str | None) -> ZoneInfo | None:
     """The ZoneInfo for a valid IANA identifier, else None.
 
@@ -55,6 +83,7 @@ def resolve_timezone(name: str | None) -> ZoneInfo | None:
     candidate = name.strip()
     if not candidate or len(candidate) > 64:
         return None
+    candidate = LEGACY_ALIASES.get(candidate, candidate)
     try:
         return ZoneInfo(candidate)
     except (ZoneInfoNotFoundError, ValueError, OSError):

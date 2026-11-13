@@ -39,7 +39,7 @@ jobs:
       - name: Ruff correctness gate
         run: ruff check --select E9,F63,F7,F82,F821 app tests
 
-      # ── advisory: the configured rule set (91 findings on this branch) ────
+      # ── advisory: the configured rule set (81 findings on this branch) ────
       - name: Ruff lint (advisory)
         continue-on-error: true
         run: |
@@ -78,7 +78,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # ── advisory: one known hooks-order error (App.jsx:1556) + 31 warnings ─
+      # ── advisory: 31 warnings (unused vars, exhaustive-deps); 0 errors ─────
       - name: ESLint (advisory)
         continue-on-error: true
         run: |
@@ -91,6 +91,10 @@ jobs:
           echo "### Prettier — advisory baseline" >> "$GITHUB_STEP_SUMMARY"
           npm run format:check 2>&1 | tail -20 | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # ── blocking: date-only vs timestamp handling must not regress ──────────
+      - name: Unit tests (date handling)
+        run: node --test tests/
+
       # ── blocking: a broken import or JSX error must never merge ───────────
       - name: Production build
         run: npm run build
@@ -102,3 +106,80 @@ jobs:
           path: frontend/dist
           retention-days: 7
           if-no-files-found: error
+
+  # ── The images must build. This job never logs in and never pushes: it exists so
+  # ── a broken Dockerfile or build context cannot merge green, which is exactly how
+  # ── the deployed images drifted behind the branch.
+  docker:
+    name: docker (build images, no push)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build metadata
+        run: |
+          echo "GIT_REVISION=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          echo "APP_VERSION=ci-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: nirvaah-backend:ci
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            GIT_REVISION=${{ env.GIT_REVISION }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=nirvaah-backend
+          cache-to: type=gha,mode=max,scope=nirvaah-backend
+
+      - name: Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          load: true
+          tags: nirvaah-frontend:ci
+          build-args: |
+            VITE_API_URL=/api
+            APP_VERSION=${{ env.APP_VERSION }}
+            GIT_REVISION=${{ env.GIT_REVISION }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=nirvaah-frontend
+          cache-to: type=gha,mode=max,scope=nirvaah-frontend
+
+      # The runtime must carry IANA timezone data, and the browser's legacy names
+      # (Chrome sends Asia/Calcutta) must resolve — see app/timeutil.py.
+      - name: Backend timezone runtime check
+        run: |
+          docker run --rm nirvaah-backend:ci python -c "
+          from zoneinfo import ZoneInfo
+          from app.timeutil import resolve_timezone
+          [ZoneInfo(z) for z in ('UTC', 'Asia/Kolkata', 'America/Los_Angeles')]
+          for alias in ('Asia/Calcutta', 'US/Pacific', 'Europe/Kiev'):
+              assert resolve_timezone(alias) is not None, alias
+          assert resolve_timezone('Mars/Olympus') is None
+          print('tzdata + legacy aliases ok')
+          "
+
+      # The labels are the whole point: an image that cannot say which commit it
+      # was built from is how "the running image is older than the branch" happens.
+      - name: Assert revision labels match the commit
+        run: |
+          set -euo pipefail
+          for img in nirvaah-backend:ci nirvaah-frontend:ci; do
+            got="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$img")"
+            echo "$img revision=$got"
+            if [ "$got" != "$GITHUB_SHA" ]; then
+              echo "::error::$img carries revision '$got', expected '$GITHUB_SHA'"
+              exit 1
+            fi
+          done
