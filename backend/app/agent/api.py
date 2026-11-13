@@ -48,6 +48,11 @@ def _message_out(m: models.ChatMessage) -> dict:
         "steps": meta.get("steps", []),
         "degraded": meta.get("degraded", ""),
         "note": meta.get("note", ""),
+        # A turn can fail after a write committed; say so rather than implying a
+        # clean turn (Task 27.6.2). The error is a classification, never a trace.
+        "graph_error": meta.get("graph_error", ""),
+        "partial": meta.get("partial", False),
+        "uncertain": meta.get("uncertain", False),
         "at": iso_utc(m.created_at),
     }
 
@@ -248,6 +253,9 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
         "steps": result.get("steps", []),
         "degraded": result.get("degraded", ""),
         "note": result.get("note", ""),
+        "graph_error": result.get("graph_error", ""),
+        "partial": bool(result.get("partial")),
+        "uncertain": bool(result.get("uncertain")),
     }
     # Filters only: the next request inherits them and re-queries every figure.
     # A merchant or listing turn may carry only its intent, which is what a later
