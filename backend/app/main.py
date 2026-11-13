@@ -27,6 +27,43 @@ app.include_router(assistant_router)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
+# Fields whose *value* must never be echoed back in a validation error.
+SECRET_FIELDS = frozenset({
+    "password", "current_password", "new_password", "confirm_password",
+    "token", "access_token", "refresh_token", "id_token", "api_token",
+    "secret", "client_secret", "api_key", "authorization",
+})
+
+
+def _scrub(value):
+    """Recursively replace the value of every secret key in a mapping."""
+    if isinstance(value, dict):
+        return {key: ("[redacted]" if str(key).lower() in SECRET_FIELDS else _scrub(item))
+                for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub(item) for item in value]
+    return value
+
+
+def _redact(errors):
+    """Remove a secret's value from a validation error before it leaves the app.
+
+    Pydantic quotes the offending input in ``detail[].input``; for a password or a
+    token that would put the secret in the response, and in any log that records
+    the body. A "field required" error quotes the *whole* body, so a mapping input
+    is scrubbed key by key as well. Location, type and message are kept, so the
+    client still learns which field failed and why.
+    """
+    for error in errors:
+        parts = error.get("loc") or ()
+        if any(str(part).lower() in SECRET_FIELDS for part in parts):
+            if "input" in error:
+                error["input"] = "[redacted]"
+        elif "input" in error:
+            error["input"] = _scrub(error["input"])
+    return errors
+
+
 def _json_safe(value):
     """A JSON-encodable copy of a payload, with non-finite floats written as text.
 
@@ -46,7 +83,8 @@ def _json_safe(value):
 
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request, exc):
-    return JSONResponse(status_code=422, content={"detail": _json_safe(jsonable_encoder(exc.errors()))})
+    detail = _json_safe(_redact(jsonable_encoder(exc.errors())))
+    return JSONResponse(status_code=422, content={"detail": detail})
 
 
 def owned(db, model, item_id, user):

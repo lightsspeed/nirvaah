@@ -19,7 +19,7 @@ re-derived (differently) at each call site:
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, DecimalException
 from typing import Any
 
 
@@ -37,6 +37,27 @@ class MoneyError(ValueError):
     """A value that cannot be stored as money."""
 
 
+def _exceeds(amount: Decimal, limit: Decimal) -> bool:
+    """``abs(amount) >= limit``, decided without arithmetic on ``amount``.
+
+    ``abs()`` and comparisons run through the decimal context, and a Decimal whose
+    exponent is past ``Emax`` raises ``decimal.Overflow`` there — which is exactly
+    the input this guard exists to refuse. ``adjusted()`` is context-free, so an
+    absurd exponent is simply "larger than any amount" instead of an exception.
+    """
+    if amount.is_zero():
+        return False
+    if amount.adjusted() != limit.adjusted():
+        return amount.adjusted() > limit.adjusted()
+    # same order of magnitude, so the exponent is small enough to compare safely
+    return abs(amount) >= limit
+
+
+def _canonical(amount: Decimal) -> Decimal:
+    """Zero has no sign: -0.00 is the same money as 0.00, so it serialises as 0.0."""
+    return ZERO if amount.is_zero() else amount
+
+
 def _parse(value: Any) -> Decimal | None:
     """Read a value as a finite Decimal without rounding; None means "no value"."""
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -45,7 +66,7 @@ def _parse(value: Any) -> Decimal | None:
         raise MoneyError("a boolean is not an amount")
     try:
         amount = value if isinstance(value, Decimal) else Decimal(str(value).strip())
-    except (InvalidOperation, ValueError, TypeError) as exc:
+    except (DecimalException, ValueError, TypeError) as exc:
         raise MoneyError(f"{value!r} is not a monetary amount") from exc
     if not amount.is_finite():
         raise MoneyError("amount must be a finite number")
@@ -57,11 +78,11 @@ def _quantise(value: Any) -> Decimal | None:
     amount = _parse(value)
     if amount is None:
         return None
-    if abs(amount) >= QUANTISE_CEILING:
+    if _exceeds(amount, QUANTISE_CEILING):
         raise MoneyError(f"{value!r} is too large to be an amount")
     try:
-        return amount.quantize(CENT, rounding=ROUND_HALF_UP)
-    except (InvalidOperation, ValueError) as exc:
+        return _canonical(amount.quantize(CENT, rounding=ROUND_HALF_UP))
+    except (DecimalException, ValueError) as exc:
         # Never let a decimal-context error escape as a 500; it is bad input.
         raise MoneyError(f"{value!r} is not a representable amount") from exc
 
@@ -91,7 +112,7 @@ def require_money(value: Any, *, field: str = "amount", positive: bool = False,
         raise MoneyError(f"{field} is required")
     # Refuse what cannot round into the column before rounding it: a value at or
     # beyond MAX+0.005 rounds up and out of range, so it is rejected as given.
-    if abs(raw) >= maximum + HALF_CENT:
+    if _exceeds(raw, maximum + HALF_CENT):
         raise MoneyError(f"{field} must be between -{maximum} and {maximum}")
     amount = _quantise(raw)
     if amount > maximum or amount < -maximum:
@@ -131,7 +152,7 @@ def json_numbers(payload: Any):
     so a snapshot keeps its numeric shape while staying JSON-serialisable.
     """
     if isinstance(payload, Decimal):
-        return float(payload)
+        return 0.0 if payload.is_zero() else float(payload)
     if isinstance(payload, dict):
         return {key: json_numbers(value) for key, value in payload.items()}
     if isinstance(payload, (list, tuple)):

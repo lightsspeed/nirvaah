@@ -153,12 +153,33 @@ columns and adds a CHECK constraint to each.
 The runner never guesses whether a migration is applied. If `schema_migrations` is
 missing a row for DDL that is already in the database — a restore from an older
 dump, or a script run by hand — that file fails with `already exists` and the
-version stays unrecorded, so it fails the same way on every run. Confirm the
-objects are present, then record the version deliberately:
+version stays unrecorded, so it fails the same way on every run.
+
+Confirm the migration finished before recording it. `0002` adds nine CHECK
+constraints and converts nine money columns, so **both counts below must be 9**:
 
 ```sql
-SELECT conname FROM pg_constraint WHERE conname LIKE '%\_range' ORDER BY conname;
--- the nine CHECK constraints are there, so 0002 has run
+SELECT count(*) AS money_check_constraints
+FROM pg_constraint
+WHERE connamespace = 'public'::regnamespace
+  AND contype = 'c'
+  AND conname LIKE '%\_range';
+
+SELECT count(*) AS money_columns
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND numeric_precision = 14
+  AND numeric_scale = 2;
+```
+
+If either count is below 9, **do not insert the version**. The migration runs as a
+single transaction, so a partial state means part of it was applied outside the
+runner, or an object was dropped afterwards: repair the schema first. Recording the
+version over a gap turns it into something no later run will look at.
+
+Only once both counts are 9:
+
+```sql
 INSERT INTO schema_migrations (version) VALUES ('0002_money_numeric_14_2.sql');
 ```
 

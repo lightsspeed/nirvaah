@@ -90,7 +90,9 @@ def as_plain(value):
         return value.isoformat()
     if isinstance(value, bool):
         return value
-    if isinstance(value, (Decimal, float, int)):
+    if isinstance(value, int):
+        return value          # an integer field is not money: keep it whole
+    if isinstance(value, (Decimal, float)):
         return number(value)
     if value is None or isinstance(value, str):
         return value

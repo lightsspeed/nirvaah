@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from decimal import Decimal
 
-from ..money import ZERO, MoneyError, to_money
+from ..money import ZERO, MoneyError, require_money, to_money
 from ..timeutil import utcnow
 from . import obs
 from . import resolve as resolver
@@ -237,9 +237,9 @@ def _journal_fields(action: dict, *, creating: bool, context: dict | None = None
         fields["description"] = text(action, "description")
         fields["category"] = text(action, "category", "Life") or "Life"
         fields["mood"] = (text(action, "mood", "steady") or "steady").lower()
-        # Nullable, but quantised like every other amount the app stores.
+        # Nullable, but quantised and sign-checked like every other amount.
         fields["amount"] = (None if action.get("amount") in (None, "")
-                            else to_money(num(action, "amount")))
+                            else require_money(num(action, "amount"), field="amount"))
         fields["event_date"] = date_value(action, "date", _business_today(context))
         fields["tags"] = tags(action)
         return fields
@@ -247,7 +247,7 @@ def _journal_fields(action: dict, *, creating: bool, context: dict | None = None
         if key in action:
             fields[key] = text(action, key)
     if action.get("amount") not in (None, ""):
-        fields["amount"] = to_money(num(action, "amount"))
+        fields["amount"] = require_money(num(action, "amount"), field="amount")
     if "date" in action or "event_date" in action:
         fields["event_date"] = date_value(action, "date" if "date" in action else "event_date")
     if "tags" in action:

@@ -230,3 +230,109 @@ def test_zero_after_quantisation_is_still_refused(client):
         response = client.post("/api/transactions", json={
             "kind": "expense", "amount": value, "category": "Groceries", "txn_date": "2026-11-13"})
         assert response.status_code == 422, f"{value!r} -> {response.status_code}"
+
+
+# ── M1: exponents that used to overflow the decimal context ───────────────
+
+
+@pytest.mark.parametrize("value", [
+    "1e999999", "1e1000000", "1e999999999", "-1e999999999",
+    Decimal("1E+999999999"), "-1E+1000000",
+])
+def test_extreme_exponents_are_money_errors(value):
+    for call in (money.to_money, money.require_money, money.number):
+        with pytest.raises(money.MoneyError):
+            call(value)
+
+
+def test_zero_with_a_huge_exponent_is_just_zero():
+    assert money.to_money(Decimal("0E+999999999")) == Decimal("0.00")
+    assert money.number(Decimal("0E+999999999")) == 0.0
+
+
+def test_the_ceiling_still_behaves_after_the_exponent_guard():
+    assert money.require_money("999999999999.99", positive=True) == money.MAX
+    assert money.require_money("999999999999.994", positive=True) == money.MAX
+    with pytest.raises(money.MoneyError):
+        money.require_money("999999999999.995", positive=True)
+    with pytest.raises(money.MoneyError):
+        money.require_money("1000000000000", positive=True)
+
+
+@pytest.mark.parametrize("value", ["1e1000000", "1e999999999", "-1e999999999"])
+def test_api_answers_422_not_500_for_extreme_exponents(client, value):
+    response = client.post("/api/transactions", json={
+        "kind": "expense", "amount": value, "category": "Groceries", "txn_date": "2026-11-13"})
+    assert response.status_code == 422, f"{value!r} -> {response.status_code} {response.text[:120]}"
+
+
+# ── M2: the journal's sign rule matches every other write ────────────────
+
+
+def test_assistant_journal_rejects_a_negative_create(db, user):
+    before = db.query(models.JournalEntry).count()
+    result = execution.execute(db, user, {
+        "op": "add_journal", "title": "negative", "amount": -5, "date": "2026-11-13"})
+
+    assert result["success"] is False, result
+    assert "negative" in (result["error"] or "")
+    assert db.query(models.JournalEntry).count() == before
+
+
+def test_assistant_journal_update_rejects_a_negative_amount(db, user):
+    created = execution.execute(db, user, {
+        "op": "add_journal", "title": "positive", "amount": 12.34, "date": "2026-11-13"})
+    assert created["success"] is True
+
+    result = execution.execute(db, user, {
+        "op": "update_journal", "id": created["entity_id"], "amount": -1})
+
+    assert result["success"] is False, result
+    assert "negative" in (result["error"] or "")
+    assert _journal(db, "positive").amount == Decimal("12.34")
+
+
+def test_assistant_journal_normalises_a_negative_zero_amount(db, user):
+    result = execution.execute(db, user, {
+        "op": "add_journal", "title": "minus nothing", "amount": -0.004, "date": "2026-11-13"})
+
+    assert result["success"] is True, result
+    assert _journal(db, "minus nothing").amount == Decimal("0.00")
+    assert json.dumps(result["changes"]["amount"]["after"]) == "0.0"
+
+
+def test_assistant_journal_still_accepts_positive_amounts(db, user):
+    created = execution.execute(db, user, {
+        "op": "add_journal", "title": "positive", "amount": 2.675, "date": "2026-11-13"})
+    updated = execution.execute(db, user, {
+        "op": "update_journal", "id": created["entity_id"], "amount": 10.005})
+
+    assert created["success"] is True and created["verified"] is True
+    assert updated["success"] is True and updated["verified"] is True
+    assert _journal(db, "positive").amount == Decimal("10.01")
+
+
+# ── L3: zero has no sign ────────────────────────────────────────────────
+
+
+def test_negative_zero_serialises_as_positive_zero():
+    assert money.to_money("-0.00") == Decimal("0.00")
+    assert str(money.to_money("-0.004")) == "0.00"
+    assert money.number(Decimal("-0.00")) == 0.0
+    assert json.dumps(money.number(Decimal("-0.00"))) == "0.0"
+    assert json.dumps(money.json_numbers({"a": Decimal("-0.00")})) == '{"a": 0.0}'
+
+
+# ── L4: integers are not money ──────────────────────────────────────────
+
+
+def test_as_plain_keeps_integers_whole():
+    from app.agent.fields import as_plain
+
+    assert as_plain(5) == 5
+    assert isinstance(as_plain(5), int) and not isinstance(as_plain(5), bool)
+    assert as_plain(True) is True
+    assert as_plain(None) is None
+    assert as_plain("x") == "x"
+    assert as_plain(Decimal("2.675")) == 2.68
+    assert isinstance(as_plain(Decimal("2.675")), float)
