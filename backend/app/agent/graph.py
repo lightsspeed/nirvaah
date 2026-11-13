@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from typing import Any, Callable, TypedDict
 
 from sqlalchemy.orm import Session
@@ -129,18 +130,24 @@ def _facts_block(analysis: dict) -> str:
 
 
 def _nodes(db: Session, user, turn: int, prefer: str = "",
-           conversation_id: str = "") -> dict[str, Callable[[ChatState], dict]]:
+           conversation_id: str = "", today: date | None = None) -> dict[str, Callable[[ChatState], dict]]:
+    # One calendar date for the whole turn: the snapshot, the planner and every
+    # write below resolve "today" from the same value, so a transaction and its
+    # journal entry cannot disagree about the day.
+    business_day = today or date.today()
+    context = {"today": business_day}
+
     def recall(state: ChatState) -> dict:
         history = list(state.get("history") or [])
         message = state.get("message") or ""
         if message:
             history = history + [{"role": "user", "content": message}]
 
-        snapshot = build_snapshot(db, user, resolve_focus_month(message))
+        snapshot = build_snapshot(db, user, resolve_focus_month(message, today=business_day), today=business_day)
         memories = _memories(db, user)
 
         with obs.timed("plan"):
-            analysis = planner.analyse(db, user, message)
+            analysis = planner.analyse(db, user, message, today=business_day)
         data_range = planner.available_range(db, user)
         current_focus = focus_mod.get(db, user, conversation_id) if conversation_id else None
 
@@ -261,7 +268,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                 continue
 
             if op in DELETE_OPS:
-                probe = execution.execute(db, user, action, dry_run=True)
+                probe = execution.execute(db, user, action, dry_run=True, context=context)
                 if probe.get("success"):
                     probe["pending"] = True
                     results.append(probe)
@@ -275,7 +282,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                 continue
 
             with obs.timed("execute"):
-                result = execution.execute(db, user, action)
+                result = execution.execute(db, user, action, context=context)
             obs.event("tool_call", conversation_id=conversation_id, turn=turn, tool=op,
                       entity_type=result.get("entity_type"), entity_id=result.get("entity_id"),
                       status="ok" if result.get("success") else "failed",
@@ -380,9 +387,15 @@ def run_turn(
     history: list[dict],
     turn: int,
     prefer: str = "",
+    today: date | None = None,
 ) -> dict:
-    """Run one turn of a conversation and return the reply plus what changed."""
-    nodes = _nodes(db, user, turn, prefer, conversation_id=conversation_id)
+    """Run one turn of a conversation and return the reply plus what changed.
+
+    ``today`` is the caller's calendar date; the graph passes it to every
+    date-sensitive node so the assistant reasons in the user's day, not the
+    container's.
+    """
+    nodes = _nodes(db, user, turn, prefer, conversation_id=conversation_id, today=today)
     payload: ChatState = {
         "message": message,
         "history": history[-HISTORY_LIMIT:],

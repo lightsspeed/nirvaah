@@ -56,13 +56,13 @@ def date_value(payload: dict, key: str, default: date | None = None):
     raise ValueError(f"{key} must be a date like 2026-11-10")
 
 
-def month(payload: dict, default: str | None = None):
+def month(payload: dict, default: str | None = None, today: date | None = None):
     raw = str(payload.get("month") or "").strip()
     if re.fullmatch(r"\d{4}-\d{2}", raw):
         return raw
     if raw:
         raise ValueError("month must look like 2026-11")
-    return default or date.today().strftime("%Y-%m")
+    return default or (today or date.today()).strftime("%Y-%m")
 
 
 def tags(payload: dict):

@@ -22,7 +22,7 @@ class Transaction(Base):
     category: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(String(255), default="")
     payment_method: Mapped[str] = mapped_column(String(40), default="SBI")
-    txn_date: Mapped[date] = mapped_column(Date, default=date.today)
+    txn_date: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 class Budget(Base):

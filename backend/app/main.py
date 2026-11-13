@@ -11,6 +11,7 @@ from sqlalchemy import func
 from .database import Base, engine, get_db
 from . import models, schemas
 from .timeutil import utcnow
+from .tz import user_today
 from .security import hash_password, verify_password, create_access_token, get_current_user
 from .agent.api import router as assistant_router
 
@@ -68,7 +69,8 @@ def dashboard(
     start_date: str | None = None,
     end_date: str | None = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user=Depends(get_current_user),
+    today: date = Depends(user_today),
 ):
     q = db.query(models.Transaction).filter_by(user_id=user.id)
     s_d = parse_date_param(start_date)
@@ -80,7 +82,7 @@ def dashboard(
     elif month and month.lower() == "all":
         # "all" - get all transactions for this user across all time
         period_label = "All Time"
-        budget_month = date.today().strftime("%Y-%m")
+        budget_month = today.strftime("%Y-%m")
     elif month:
         if engine.dialect.name == "sqlite":
             q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == month)
@@ -90,7 +92,7 @@ def dashboard(
         budget_month = month
     else:
         # Default: current month stats
-        cur_m = date.today().strftime("%Y-%m")
+        cur_m = today.strftime("%Y-%m")
         if engine.dialect.name == "sqlite":
             q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
         else:
@@ -144,7 +146,8 @@ def list_transactions(
     category: str | None = None,
     search: str | None = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user=Depends(get_current_user),
+    today: date = Depends(user_today),
 ):
     q = db.query(models.Transaction).filter_by(user_id=user.id)
     s_d = parse_date_param(start_date)
@@ -160,7 +163,7 @@ def list_transactions(
             q = q.filter(func.to_char(models.Transaction.txn_date, "YYYY-MM") == month)
     else:
         # Default: current month
-        cur_m = date.today().strftime("%Y-%m")
+        cur_m = today.strftime("%Y-%m")
         if engine.dialect.name == "sqlite":
             q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
         else:
@@ -194,7 +197,8 @@ def delete_transaction(item_id: int, db: Session = Depends(get_db), user=Depends
     item=owned(db,models.Transaction,item_id,user); db.delete(item); db.commit(); return {"deleted":True}
 
 @app.get("/api/budgets")
-def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(get_current_user)):
+def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(get_current_user),
+            today: date = Depends(user_today)):
     q = db.query(models.Budget).filter_by(user_id=user.id)
     if month and month.lower() != "all":
         month_budgets = q.filter(models.Budget.month == month).order_by(models.Budget.month.desc()).all()
@@ -203,7 +207,7 @@ def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(
         budget_items = q.order_by(models.Budget.month.desc()).all()
     res = []
     for x in budget_items:
-        m = month if (month and month.lower() != "all") else (x.month or date.today().strftime("%Y-%m"))
+        m = month if (month and month.lower() != "all") else (x.month or today.strftime("%Y-%m"))
         if engine.dialect.name == "sqlite":
             spent = db.query(func.coalesce(func.sum(models.Transaction.amount), 0)).filter(
                 models.Transaction.user_id == user.id,
@@ -275,9 +279,10 @@ def delete_liability(item_id:int, db:Session=Depends(get_db), user=Depends(get_c
 
 # ── Cashflow: last N months of income vs expense ─────────────────────────────
 @app.get("/api/cashflow")
-def cashflow(months: int = Query(default=6, ge=1, le=24), db: Session = Depends(get_db), user=Depends(get_current_user)):
+def cashflow(months: int = Query(default=6, ge=1, le=24), db: Session = Depends(get_db),
+             user=Depends(get_current_user), today: date = Depends(user_today)):
     import calendar as cal_mod
-    today_d = date.today()
+    today_d = today
     result = []
     for i in range(months - 1, -1, -1):
         y = today_d.year
@@ -310,7 +315,8 @@ def analytics(
     start_date: str = Query(default=None),
     end_date: str = Query(default=None),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user)
+    user=Depends(get_current_user),
+    today: date = Depends(user_today),
 ):
     q = db.query(models.Transaction).filter_by(user_id=user.id)
     s_d = parse_date_param(start_date)
@@ -339,7 +345,7 @@ def analytics(
         to_label = "Present"
     else:
         # Default: current month
-        cur_m = date.today().strftime("%Y-%m")
+        cur_m = today.strftime("%Y-%m")
         if engine.dialect.name == "sqlite":
             q = q.filter(func.strftime("%Y-%m", models.Transaction.txn_date) == cur_m)
         else:

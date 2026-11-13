@@ -165,7 +165,7 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
 
         if month and re.search(r"\bspend|spent|expense|saving|income|earn|budget\b", text):
             return {"intent": "month_summary", "query": {"month": month},
-                    "facts": analytics.summary(db, user, month)}
+                    "facts": analytics.summary(db, user, month, today=today)}
 
         months_back = _months_back(message)
         if months_back or re.search(r"\btrend|over time|month by month|history\b", text):

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -59,7 +60,18 @@ STRING_PK = {models.Note, models.Task, models.JournalEntry}
 
 # ── field builders ───────────────────────────────────────────────────────────
 
-def _transaction_fields(action: dict, *, creating: bool) -> dict:
+def _business_today(context: dict | None) -> date:
+    """The caller's calendar date for defaults, or the server's day if none came in.
+
+    ``context`` is built by the graph from ``timeutil.today_for_timezone`` — one
+    resolved date for the whole turn, so a transaction and the journal entry it
+    produces cannot land on different days.
+    """
+    value = (context or {}).get("today")
+    return value if isinstance(value, date) else date.today()
+
+
+def _transaction_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         kind = text(action, "kind", "expense").lower()
@@ -73,7 +85,7 @@ def _transaction_fields(action: dict, *, creating: bool) -> dict:
         fields["category"] = text(action, "category", "Other") or "Other"
         fields["description"] = text(action, "description")
         fields["payment_method"] = text(action, "payment_method", "SBI") or "SBI"
-        fields["txn_date"] = date_value(action, "txn_date", __import__("datetime").date.today())
+        fields["txn_date"] = date_value(action, "txn_date", _business_today(context))
         return fields
     if "kind" in action:
         kind = text(action, "kind").lower()
@@ -93,23 +105,23 @@ def _transaction_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _budget_fields(action: dict, *, creating: bool) -> dict:
+def _budget_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["category"] = text(action, "category") or "Other"
         fields["monthly_limit"] = round(num(action, "monthly_limit"), 2)
-        fields["month"] = month(action)
+        fields["month"] = month(action, today=_business_today(context))
         return fields
     if "monthly_limit" in action:
         fields["monthly_limit"] = round(num(action, "monthly_limit"), 2)
     if "category" in action:
         fields["category"] = text(action, "category")
     if "month" in action:
-        fields["month"] = month(action)
+        fields["month"] = month(action, today=_business_today(context))
     return fields
 
 
-def _goal_fields(action: dict, *, creating: bool) -> dict:
+def _goal_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["name"] = text(action, "name") or "Goal"
@@ -127,7 +139,7 @@ def _goal_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _investment_fields(action: dict, *, creating: bool) -> dict:
+def _investment_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         invested = round(num(action, "invested_amount", 0), 2)
@@ -146,7 +158,7 @@ def _investment_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _liability_fields(action: dict, *, creating: bool) -> dict:
+def _liability_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["name"] = text(action, "name") or "Liability"
@@ -164,7 +176,7 @@ def _liability_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _note_fields(action: dict, *, creating: bool) -> dict:
+def _note_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["title"] = text(action, "title") or "Untitled note"
@@ -182,7 +194,7 @@ def _note_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _task_fields(action: dict, *, creating: bool) -> dict:
+def _task_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         label = text(action, "text") or text(action, "title")
@@ -215,7 +227,7 @@ def _task_fields(action: dict, *, creating: bool) -> dict:
     return fields
 
 
-def _journal_fields(action: dict, *, creating: bool) -> dict:
+def _journal_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
         fields["title"] = text(action, "title") or "Journal entry"
@@ -223,7 +235,7 @@ def _journal_fields(action: dict, *, creating: bool) -> dict:
         fields["category"] = text(action, "category", "Life") or "Life"
         fields["mood"] = (text(action, "mood", "steady") or "steady").lower()
         fields["amount"] = num(action, "amount", None) if action.get("amount") not in (None, "") else None
-        fields["event_date"] = date_value(action, "date", __import__("datetime").date.today())
+        fields["event_date"] = date_value(action, "date", _business_today(context))
         fields["tags"] = tags(action)
         return fields
     for key in ("title", "description", "category", "mood"):
@@ -345,7 +357,7 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
     # ── create ──────────────────────────────────────────────────────────────
     if verb == "add":
         try:
-            fields = builder(action, creating=True)
+            fields = builder(action, creating=True, context=context)
         except ValueError as exc:
             return _result(op, kind, success=False, error=str(exc))
         pk = action.get("id") or (str(uuid.uuid4()) if spec.model in STRING_PK else None)
@@ -428,7 +440,7 @@ def execute(db: Session, user, action: dict, dry_run: bool = False, context: dic
 
     # ── update ──────────────────────────────────────────────────────────────
     try:
-        fields = builder(action, creating=False)
+        fields = builder(action, creating=False, context=context)
     except ValueError as exc:
         return _result(op, kind, success=False, entity_id=row_id, error=str(exc))
     if not fields:

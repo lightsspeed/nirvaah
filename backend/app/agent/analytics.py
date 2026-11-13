@@ -37,8 +37,9 @@ def shift_month(month: str, delta: int) -> str:
     return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
 
-def current_month() -> str:
-    return date.today().strftime("%Y-%m")
+def current_month(today: date | None = None) -> str:
+    """The month in the caller's calendar; UTC when no context is supplied."""
+    return (today or date.today()).strftime("%Y-%m")
 
 
 def categories(db: Session, user) -> list[str]:
@@ -351,8 +352,8 @@ def highest_transactions(db: Session, user, kind: str = "expense", month: str | 
     }
 
 
-def summary(db: Session, user, month: str | None = None) -> dict:
-    month = month or current_month()
+def summary(db: Session, user, month: str | None = None, today: date | None = None) -> dict:
+    month = month or current_month(today)
     start, end = month_bounds(month)
     rows = _rows(db, user, start, end)
     income = _total([r for r in rows if r.kind == "income"])

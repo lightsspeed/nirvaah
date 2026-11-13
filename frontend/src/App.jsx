@@ -17,6 +17,7 @@ import {
 import GlobalSearch from './GlobalSearch';
 import BrandAiIcon from './BrandAiIcon';
 import AssistantPage from './AssistantPage';
+import { timezoneHeader } from './deviceTz';
 import NotesPage from './life/NotesPage';
 import TasksPage from './life/TasksPage';
 import JournalPage from './life/JournalPage';
@@ -1350,7 +1351,10 @@ export default function App() {
         return () => window.removeEventListener('keydown', handleEsc);
     }, [manageModal, selectedCategoryDetail]);
 
-    const api = useMemo(() => axios.create({ baseURL: API, headers: token ? { Authorization: `Bearer ${token}` } : {} }), [token]);
+    const api = useMemo(() => axios.create({
+        baseURL: API,
+        headers: token ? { Authorization: `Bearer ${token}`, ...timezoneHeader() } : timezoneHeader(),
+    }), [token]);
 
     const logout = () => {
         localStorage.removeItem('moneta_token');

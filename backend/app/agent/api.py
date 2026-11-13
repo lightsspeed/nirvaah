@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ from ..timeutil import utcnow
 from . import execution, focus as focus_mod, obs
 from ..database import get_db
 from ..security import get_current_user
+from ..tz import user_today
 from . import graph, providers
 
 router = APIRouter(prefix="/api/chat", tags=["assistant"])
@@ -163,7 +165,8 @@ def list_messages(conversation_id: str, db: Session = Depends(get_db), user=Depe
 
 
 @router.post("/conversations/{conversation_id}/messages")
-def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(get_db),
+                 user=Depends(get_current_user), today: date = Depends(user_today)):
     conversation = _conversation(db, user, conversation_id)
     text = (data.message or "").strip()
     if not text:
@@ -183,7 +186,8 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     db.commit()
 
     try:
-        result = graph.run_turn(db, user, conversation_id, text, history, turn=len(prior) // 2 + 1, prefer=(data.prefer or "").strip()[:80])
+        result = graph.run_turn(db, user, conversation_id, text, history, turn=len(prior) // 2 + 1,
+                                prefer=(data.prefer or "").strip()[:80], today=today)
     except providers.ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
 
@@ -243,15 +247,17 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
 
 
 @router.post("/conversations/{conversation_id}/confirm")
-def confirm_deletes(conversation_id: str, data: ConfirmIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def confirm_deletes(conversation_id: str, data: ConfirmIn, db: Session = Depends(get_db),
+                    user=Depends(get_current_user), today: date = Depends(user_today)):
     _conversation(db, user, conversation_id)
+    context = {"today": today}
     applied, failed = [], []
     for action in (data.actions or [])[:10]:
         if action.get("op") not in DELETE_OPS:
             failed.append({"op": action.get("op"), "ok": False, "success": False, "verified": False,
                            "summary": "Only deletions need confirming."})
             continue
-        result = execution.execute(db, user, action)
+        result = execution.execute(db, user, action, context=context)
         obs.event("tool_call", conversation_id=conversation_id, tool=result.get("operation"),
                   entity_type=result.get("entity_type"), entity_id=result.get("entity_id"),
                   status="ok" if result.get("success") else "failed",

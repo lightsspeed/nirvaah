@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { timezoneHeader } from '../deviceTz';
 
 /**
  * Nirvaah "life" data layer — notes, tasks and life events.
@@ -325,6 +326,7 @@ const authHeaders = () => {
     const token = (typeof localStorage !== 'undefined' && localStorage.getItem('moneta_token')) || '';
     return {
         'Content-Type': 'application/json',
+        ...timezoneHeader(),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
 };

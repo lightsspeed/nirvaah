@@ -57,9 +57,13 @@ def _totals(rows) -> dict:
 
 # ── data snapshot ───────────────────────────────────────────────────────────
 
-def build_snapshot(db: Session, user, month: str | None = None) -> dict:
-    """A compact, factual view of everything the assistant may talk about."""
-    today = date.today()
+def build_snapshot(db: Session, user, month: str | None = None, today: date | None = None) -> dict:
+    """A compact, factual view of everything the assistant may talk about.
+
+    ``today`` is the caller's calendar date (see ``app.timeutil.today_for_timezone``).
+    Omitting it keeps the old UTC-server behaviour, which is the documented fallback.
+    """
+    today = today or date.today()
     month = month or today.strftime("%Y-%m")
     start, end = _month_bounds(month)
     prev_end = start - timedelta(days=1)
