@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
 
 from app import migrate
 from app.database import Base
@@ -25,9 +24,25 @@ def _indexes(engine) -> set[str]:
         return {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))}
 
 
-def test_the_index_migration_is_discovered(engine):
-    assert [p.name for p in migrate.available()] == ["0001_transactions_user_id_txn_date_index.sql"]
+def test_the_migrations_are_discovered(engine):
+    names = [p.name for p in migrate.available()]
+    assert names[0] == "0001_transactions_user_id_txn_date_index.sql"
+    assert "0002_money_numeric_14_2.sql" in names
+    # SQLite only gets the portable migration; the money ALTERs are PostgreSQL DDL.
     assert [p.name for p in migrate.pending(engine)] == ["0001_transactions_user_id_txn_date_index.sql"]
+
+
+def test_dialect_scoped_migration_is_skipped_elsewhere(engine):
+    money = next(p for p in migrate.available() if p.name.startswith("0002_"))
+    index = next(p for p in migrate.available() if p.name.startswith("0001_"))
+    assert migrate.dialect_of(money) == "postgresql"
+    assert migrate.dialect_of(index) is None
+    assert migrate.applies_to(money, "sqlite") is False
+    assert migrate.applies_to(money, "postgresql") is True
+    assert migrate.applies_to(index, "sqlite") is True
+    # it is not "pending" forever on SQLite: it simply does not apply
+    migrate.apply(engine)
+    assert migrate.pending(engine) == []
 
 
 def test_index_migration_applies_and_is_recorded(engine):
@@ -63,7 +78,7 @@ def test_a_failing_migration_is_not_recorded_and_stays_pending(engine, tmp_path)
     (bad / "0001_ok.sql").write_text("CREATE INDEX IF NOT EXISTS ix_tmp_ok ON transactions (txn_date);", encoding="utf-8")
     (bad / "0002_bad.sql").write_text("THIS IS NOT SQL;", encoding="utf-8")
 
-    with pytest.raises(SQLAlchemyError):
+    with pytest.raises(migrate.MigrationError, match="0002_bad.sql failed"):
         migrate.apply(engine, directory=bad)
 
     with engine.connect() as conn:

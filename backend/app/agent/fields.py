@@ -8,13 +8,18 @@ from __future__ import annotations
 import json
 import re
 from datetime import date, datetime
+from decimal import Decimal
+
+from ..money import ZERO, MoneyError, to_money
 
 
-def money(value) -> float:
+def money(value) -> Decimal:
+    """Quantised paise, ROUND_HALF_UP; an unusable value becomes zero."""
     try:
-        return round(float(value), 2)
-    except (TypeError, ValueError):
-        return 0.0
+        amount = to_money(value)
+    except MoneyError:
+        return ZERO
+    return ZERO if amount is None else amount
 
 
 def inr(value) -> str:

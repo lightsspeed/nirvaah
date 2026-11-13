@@ -22,7 +22,7 @@ from datetime import date, timedelta
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from . import models
+from . import models, money
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -59,18 +59,20 @@ def _snapshot_kind_expr():
 
 
 def _totals(rows) -> dict:
-    income = sum(t.amount for t in rows if t.kind == "income")
-    expense = sum(t.amount for t in rows if t.kind == "expense")
+    income = money.total(t.amount for t in rows if t.kind == "income")
+    expense = money.total(t.amount for t in rows if t.kind == "expense")
     return _totals_from_sums(income, expense)
 
 
-def _totals_from_sums(income: float, expense: float) -> dict:
-    """The same arithmetic, for figures the database already summed."""
+def _totals_from_sums(income, expense) -> dict:
+    """The same arithmetic, in Decimal, for figures the database already summed."""
+    income = money.to_money(income, default=money.ZERO)
+    expense = money.to_money(expense, default=money.ZERO)
     return {
-        "income": round(income, 2),
-        "expense": round(expense, 2),
-        "savings": round(income - expense, 2),
-        "savings_rate": round(((income - expense) / income) * 100, 1) if income else 0,
+        "income": money.number(income),
+        "expense": money.number(expense),
+        "savings": money.number(income - expense),
+        "savings_rate": round(float((income - expense) / income * 100), 1) if income else 0,
     }
 
 
@@ -96,15 +98,15 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
     month_key, kind_key = _snapshot_month_expr(db), _snapshot_kind_expr()
     all_income, all_expense, all_count = (
         db.query(
-            func.sum(case((models.Transaction.kind == "income", models.Transaction.amount), else_=0.0)),
-            func.sum(case((models.Transaction.kind == "expense", models.Transaction.amount), else_=0.0)),
+            func.sum(case((models.Transaction.kind == "income", models.Transaction.amount), else_=0)),
+            func.sum(case((models.Transaction.kind == "expense", models.Transaction.amount), else_=0)),
             func.count(models.Transaction.id),
         )
         .filter(models.Transaction.user_id == user.id)
         .one()
     )
-    all_income = float(all_income or 0)
-    all_expense = float(all_expense or 0)
+    all_income = money.to_money(all_income, default=money.ZERO)
+    all_expense = money.to_money(all_expense, default=money.ZERO)
     all_count = int(all_count or 0)
 
     # Twelve months of totals, so "what about June?" is answerable even when the
@@ -118,11 +120,12 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
     ):
         if not key:
             continue
-        bucket = trend.setdefault(key, {"income": 0.0, "expense": 0.0})
-        bucket["income" if bucket_name == "income" else "expense"] += float(total or 0)
+        bucket = trend.setdefault(key, {"income": money.ZERO, "expense": money.ZERO})
+        bucket["income" if bucket_name == "income" else "expense"] += money.to_money(total, default=money.ZERO)
     monthly_trend = [
-        {"month": key, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
-         "savings": round(v["income"] - v["expense"], 2)}
+        {"month": key,
+         "income": money.number(v["income"]), "expense": money.number(v["expense"]),
+         "savings": money.number(money.to_money(v["income"]) - money.to_money(v["expense"]))}
         for key, v in sorted(trend.items())[-12:]
     ]
 
@@ -139,7 +142,7 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
     ):
         if not key:
             continue
-        cat_month.setdefault(category, {})[key] = float(total or 0)
+        cat_month.setdefault(category, {})[key] = money.to_money(total, default=money.ZERO)
 
     # Every category is listed here (not just the biggest): capping this table
     # hides the one the user asks about, and the model then reports "no records"
@@ -149,10 +152,10 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
             {
                 "category": category,
                 "month": max(months, key=months.get),
-                "amount": round(max(months.values()), 2),
+                "amount": money.number(max(months.values())),
                 "months": len(months),
-                "total": round(sum(months.values()), 2),
-                "average": round(sum(months.values()) / len(months), 2),
+                "total": money.number(money.total(months.values())),
+                "average": money.number(money.total(months.values()) / len(months)),
             }
             for category, months in cat_month.items()
             if months
@@ -162,16 +165,16 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
     )
 
     category_spend_by_month = {
-        category: {month: round(amount, 2) for month, amount in sorted(months.items())[-18:]}
+        category: {month: money.number(amount) for month, amount in sorted(months.items())[-18:]}
         for category, months in sorted(
-            cat_month.items(), key=lambda item: sum(item[1].values()), reverse=True
+            cat_month.items(), key=lambda item: money.total(item[1].values()), reverse=True
         )[:12]
     }
 
     spent = {}
     for t in this_month:
         if t.kind == "expense":
-            spent[t.category] = spent.get(t.category, 0) + t.amount
+            spent[t.category] = spent.get(t.category, money.ZERO) + t.amount
 
     budgets = db.query(models.Budget).filter(models.Budget.user_id == user.id).order_by(models.Budget.month.desc()).all()
     goals = db.query(models.Goal).filter(models.Goal.user_id == user.id).all()
@@ -201,7 +204,7 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
         )
     }
 
-    return {
+    return money.json_numbers({
         "today": today.isoformat(),
         "month_in_focus": month,
         "month_in_focus_label": start.strftime("%B %Y"),
@@ -220,16 +223,17 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
             "transaction_count": all_count,
         },
         "net_worth": {
-            "investments_value": round(sum(i.current_value for i in investments), 2),
-            "investments_cost": round(sum(i.invested_amount for i in investments), 2),
-            "liabilities_outstanding": round(sum(l.outstanding_amount for l in liabilities), 2),
-            "net_worth": round(
-                sum(i.current_value for i in investments) - sum(l.outstanding_amount for l in liabilities), 2
+            "investments_value": money.number(money.total(i.current_value for i in investments)),
+            "investments_cost": money.number(money.total(i.invested_amount for i in investments)),
+            "liabilities_outstanding": money.number(money.total(l.outstanding_amount for l in liabilities)),
+            "net_worth": money.number(
+                money.total(i.current_value for i in investments)
+                - money.total(l.outstanding_amount for l in liabilities)
             ),
-            "monthly_emi_total": round(sum(l.monthly_emi or 0 for l in liabilities), 2),
+            "monthly_emi_total": money.number(money.total(l.monthly_emi for l in liabilities)),
         },
         "spend_by_category_this_month": (
-            [{"category": k, "spent": round(v, 2)} for k, v in sorted(spent.items(), key=lambda x: x[1], reverse=True)]
+            [{"category": k, "spent": money.number(v)} for k, v in sorted(spent.items(), key=lambda x: x[1], reverse=True)]
             # Categories the user does use but did not spend in this month are
             # listed explicitly at zero: a small model reads a missing row as
             # "pick another row" instead of "zero".
@@ -243,9 +247,10 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
                 "id": b.id,
                 "category": b.category,
                 "month": b.month,
-                "limit": b.monthly_limit,
-                "spent": round(spent.get(b.category, 0), 2) if b.month == month else None,
-                "remaining": round(b.monthly_limit - spent.get(b.category, 0), 2) if b.month == month else None,
+                "limit": money.number(b.monthly_limit),
+                "spent": money.number(spent.get(b.category, money.ZERO)) if b.month == month else None,
+                "remaining": money.number(b.monthly_limit - spent.get(b.category, money.ZERO))
+                             if b.month == month else None,
             }
             for b in budgets[:30]
         ],
@@ -253,10 +258,10 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
             {
                 "id": g.id,
                 "name": g.name,
-                "target": g.target_amount,
-                "saved": g.saved_amount,
-                "remaining": round(g.target_amount - g.saved_amount, 2),
-                "progress_pct": round((g.saved_amount / g.target_amount) * 100, 1) if g.target_amount else 0,
+                "target": money.number(g.target_amount),
+                "saved": money.number(g.saved_amount),
+                "remaining": money.number(g.target_amount - g.saved_amount),
+                "progress_pct": round(float(g.saved_amount / g.target_amount * 100), 1) if g.target_amount else 0,
                 "target_date": g.target_date.isoformat() if g.target_date else None,
             }
             for g in goals
@@ -266,9 +271,9 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
                 "id": i.id,
                 "name": i.name,
                 "type": i.asset_type,
-                "invested": i.invested_amount,
-                "current": i.current_value,
-                "gain": round(i.current_value - i.invested_amount, 2),
+                "invested": money.number(i.invested_amount),
+                "current": money.number(i.current_value),
+                "gain": money.number(i.current_value - i.invested_amount),
                 "notes": short(i.notes, 80),
             }
             for i in investments[:30]
@@ -278,8 +283,8 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
                 "id": l.id,
                 "name": l.name,
                 "type": l.liability_type,
-                "outstanding": l.outstanding_amount,
-                "emi": l.monthly_emi,
+                "outstanding": money.number(l.outstanding_amount),
+                "emi": money.number(l.monthly_emi),
                 "notes": short(l.notes, 80),
             }
             for l in liabilities[:30]
@@ -289,7 +294,7 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
                 "id": t.id,
                 "date": t.txn_date.isoformat(),
                 "kind": t.kind,
-                "amount": t.amount,
+                "amount": money.number(t.amount),
                 "category": t.category,
                 "description": t.description,
                 "method": t.payment_method,
@@ -326,12 +331,12 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
                 "title": j.title,
                 "category": j.category,
                 "mood": j.mood,
-                "amount": j.amount,
+                "amount": money.number(j.amount),
                 "description": short(j.description, 140),
             }
             for j in journal[:15]
         ],
-    }
+    })
 
 
 SYSTEM_RULES = """You are Nirvaah, the personal finance assistant inside the user's own app.

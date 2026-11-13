@@ -1,8 +1,21 @@
 from datetime import date, datetime
-from sqlalchemy import String, Integer, Float, Date, DateTime, ForeignKey, Boolean, Text
+from decimal import Decimal
+
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from .database import Base
 from .timeutil import utcnow
+
 
 class User(Base):
     __tablename__ = "users"
@@ -18,7 +31,7 @@ class Transaction(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(12))  # income | expense
-    amount: Mapped[float] = mapped_column(Float)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     category: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(String(255), default="")
     payment_method: Mapped[str] = mapped_column(String(40), default="SBI")
@@ -30,7 +43,7 @@ class Budget(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     category: Mapped[str] = mapped_column(String(80))
-    monthly_limit: Mapped[float] = mapped_column(Float)
+    monthly_limit: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     month: Mapped[str] = mapped_column(String(7))  # YYYY-MM
 
 class Goal(Base):
@@ -38,8 +51,8 @@ class Goal(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
-    target_amount: Mapped[float] = mapped_column(Float)
-    saved_amount: Mapped[float] = mapped_column(Float, default=0)
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    saved_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 class Investment(Base):
@@ -48,8 +61,8 @@ class Investment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     asset_type: Mapped[str] = mapped_column(String(50))
-    invested_amount: Mapped[float] = mapped_column(Float)
-    current_value: Mapped[float] = mapped_column(Float)
+    invested_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    current_value: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     notes: Mapped[str] = mapped_column(Text, default="")
 
 class Liability(Base):
@@ -58,8 +71,8 @@ class Liability(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     liability_type: Mapped[str] = mapped_column(String(50))
-    outstanding_amount: Mapped[float] = mapped_column(Float)
-    monthly_emi: Mapped[float] = mapped_column(Float, default=0)
+    outstanding_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    monthly_emi: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     notes: Mapped[str] = mapped_column(Text, default="")
 
 
@@ -102,7 +115,7 @@ class JournalEntry(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(60), default="Life")
     mood: Mapped[str] = mapped_column(String(20), default="steady")
-    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     tags: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

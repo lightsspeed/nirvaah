@@ -25,7 +25,7 @@ from datetime import date
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, money
 
 
 # ── range helpers ────────────────────────────────────────────────────────────
@@ -156,13 +156,15 @@ def _month_buckets(db: Session, user, *, start: date | None = None, end: date | 
     for key, name, total, count in rows:
         if not key:
             continue
-        entry = buckets.setdefault(key, {"income": 0.0, "expense": 0.0, "count": 0})
-        entry[name if name in ("income", "expense") else "expense"] += float(total or 0)
+        entry = buckets.setdefault(key, {"income": money.ZERO, "expense": money.ZERO, "count": 0})
+        entry[name if name in ("income", "expense") else "expense"] += money.to_money(total, default=money.ZERO)
         entry["count"] += int(count or 0)
     for entry in buckets.values():
-        entry["income"] = round(entry["income"], 2)
-        entry["expense"] = round(entry["expense"], 2)
-        entry["savings"] = round(entry["income"] - entry["expense"], 2)
+        income = money.to_money(entry["income"], default=money.ZERO)
+        expense = money.to_money(entry["expense"], default=money.ZERO)
+        entry["income"] = money.number(income)
+        entry["expense"] = money.number(expense)
+        entry["savings"] = money.number(income - expense)
     return dict(sorted(buckets.items()))
 
 
@@ -186,14 +188,14 @@ def category_month(db: Session, user, category: str, month: str) -> dict:
         .group_by(key)
         .all()
     )
-    found = {name: (float(total or 0), int(count or 0)) for name, total, count in rows}
+    found = {name: (money.to_money(total, default=money.ZERO), int(count or 0)) for name, total, count in rows}
 
     # One entry per matched category, in the order the matcher returned them — a
     # category with no rows this month is reported as 0.0/0, never omitted.
     totals = []
     for name in matched:
-        total, count = found.get(name.lower(), (0.0, 0))
-        totals.append({"category": name, "total": round(total, 2), "count": count})
+        total, count = found.get(name.lower(), (money.ZERO, 0))
+        totals.append({"category": name, "total": money.number(total), "count": count})
 
     month_key = month_expr(db)
     months_with = sorted({
@@ -212,7 +214,7 @@ def category_month(db: Session, user, category: str, month: str) -> dict:
         "month": month,
         "categories": matched,
         "months_with_category": months_with,
-        "total": round(sum(t["total"] for t in totals), 2),
+        "total": money.number(money.total(t["total"] for t in totals)),
         "count": any_rows,
         "breakdown": totals,
     }
@@ -237,7 +239,8 @@ def category_series(db: Session, user, category: str) -> dict:
     if not rows:
         return {"status": "no_data_for_category", "category": category, "categories": matched}
     series = [
-        {"month": key, "total": round(float(total or 0), 2), "count": int(count or 0)}
+        {"month": key, "total": money.number(money.to_money(total, default=money.ZERO)),
+         "count": int(count or 0)}
         for key, total, count in sorted(rows)
         if key
     ]
@@ -248,9 +251,9 @@ def category_series(db: Session, user, category: str) -> dict:
         "category": matched[0],
         "categories": matched,
         "series": series,
-        "total": round(sum(s["total"] for s in series), 2),
+        "total": money.number(money.total(s["total"] for s in series)),
         "months": len(series),
-        "average": round(sum(s["total"] for s in series) / len(series), 2),
+        "average": money.number(money.total(s["total"] for s in series) / len(series)),
         "max_month": peak,
         "min_month": low,
     }
@@ -272,16 +275,16 @@ def category_by_month(db: Session, user, month: str) -> dict:
     )
     if not rows:
         return {"status": "no_data", "month": month}
-    totals = {name: float(total or 0) for name, total in rows}
-    overall = sum(totals.values()) or 1.0
+    totals = {name: money.to_money(total, default=money.ZERO) for name, total in rows}
+    overall = money.total(totals.values()) or money.CENT
     values = [
-        {"category": k, "total": round(v, 2), "share_pct": round(v / overall * 100, 1)}
+        {"category": k, "total": money.number(v), "share_pct": round(float(v / overall * 100), 1)}
         for k, v in sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
     ]
     return {
         "status": "ok",
         "month": month,
-        "total": round(sum(totals.values()), 2),
+        "total": money.number(money.total(totals.values())),
         "categories": values,
         "highest": values[0],
         "lowest": values[-1],
@@ -338,8 +341,8 @@ def compare_months(db: Session, user, month_a: str, month_b: str) -> dict:
                 "available_range": series["available_range"]}
     out = {"status": "ok", "a": a, "b": b}
     if a and b:
-        out["expense_delta"] = round(b["expense"] - a["expense"], 2)
-        out["income_delta"] = round(b["income"] - a["income"], 2)
+        out["expense_delta"] = money.number(money.to_money(b["expense"]) - money.to_money(a["expense"]))
+        out["income_delta"] = money.number(money.to_money(b["income"]) - money.to_money(a["income"]))
         out["expense_change_pct"] = round((b["expense"] - a["expense"]) / a["expense"] * 100, 1) if a["expense"] else None
     return out
 
@@ -392,8 +395,8 @@ def merchants(db: Session, user, month: str | None = None, limit: int = 8) -> di
     if not rows:
         return {"status": "no_data", "month": month}
     ranked = [
-        {"merchant": label, "total": round(float(total or 0), 2), "count": int(count or 0),
-         "_first": int(first_id or 0)}
+        {"merchant": label, "total": money.number(money.to_money(total, default=money.ZERO)),
+         "count": int(count or 0), "_first": int(first_id or 0)}
         for _key, label, total, count, first_id in rows
     ]
     ranked.sort(key=lambda e: (-e["total"], e["_first"]))
@@ -444,8 +447,8 @@ def recurring(db: Session, user, min_months: int = 3) -> dict:
         return {"status": "no_data"}
     out = [
         {"merchant": label, "months_seen": int(months_seen),
-         "average": round(float(total or 0) / int(count or 1), 2), "last_month": last_month,
-         "_first": int(first_id or 0)}
+         "average": money.number(money.to_money(total, default=money.ZERO) / int(count or 1)),
+         "last_month": last_month, "_first": int(first_id or 0)}
         for _key, label, months_seen, total, count, last_month, first_id in rows
         if int(months_seen or 0) >= min_months
     ]
@@ -493,9 +496,9 @@ def search(db: Session, user, *, text: str | None = None, category: str | None =
     return {
         "status": "ok" if count else ("no_data" if not month and not category and not text else "no_data_for_category"),
         "count": int(count or 0),
-        "total": round(float(total or 0), 2),
+        "total": money.number(money.to_money(total, default=money.ZERO)),
         "transactions": [
-            {"date": r.txn_date.isoformat(), "kind": r.kind, "amount": round(float(r.amount or 0), 2),
+            {"date": r.txn_date.isoformat(), "kind": r.kind, "amount": money.number(r.amount),
              "category": r.category, "description": r.description, "paid_with": r.payment_method}
             for r in rows
         ],
@@ -518,7 +521,7 @@ def highest_transactions(db: Session, user, kind: str = "expense", month: str | 
         return {"status": "no_data", "month": month}
     return {
         "status": "ok",
-        "items": [{"date": r.txn_date.isoformat(), "amount": round(float(r.amount or 0), 2),
+        "items": [{"date": r.txn_date.isoformat(), "amount": money.number(r.amount),
                    "category": r.category, "description": r.description} for r in rows],
     }
 
@@ -533,15 +536,15 @@ def summary(db: Session, user, month: str | None = None, today: date | None = No
         .group_by(models.Transaction.kind)
         .all()
     )
-    income = round(sum(float(total or 0) for name, total, _count in rows if name == "income"), 2)
-    expense = round(sum(float(total or 0) for name, total, _count in rows if name == "expense"), 2)
+    income = money.total(total for name, total, _count in rows if name == "income")
+    expense = money.total(total for name, total, _count in rows if name == "expense")
     count = sum(int(c or 0) for _name, _total, c in rows)
     return {
         "status": "ok",
         "month": month,
-        "income": income,
-        "expense": expense,
-        "savings": round(income - expense, 2),
-        "savings_rate": round((income - expense) / income * 100, 1) if income else None,
+        "income": money.number(income),
+        "expense": money.number(expense),
+        "savings": money.number(income - expense),
+        "savings_rate": round(float((income - expense) / income * 100), 1) if income else None,
         "count": count,
     }

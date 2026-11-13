@@ -28,6 +28,9 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from .. import models
+from decimal import Decimal
+
+from ..money import ZERO, MoneyError, to_money
 from ..timeutil import utcnow
 from . import obs
 from . import resolve as resolver
@@ -78,10 +81,10 @@ def _transaction_fields(action: dict, *, creating: bool, context: dict | None = 
         if kind not in ("income", "expense"):
             raise ValueError("A transaction is either income or expense.")
         fields["kind"] = kind
-        amount = num(action, "amount")
-        if amount <= 0:
+        amount = to_money(num(action, "amount"))
+        if amount <= ZERO:
             raise ValueError("A transaction needs an amount greater than zero.")
-        fields["amount"] = round(amount, 2)
+        fields["amount"] = amount
         fields["category"] = text(action, "category", "Other") or "Other"
         fields["description"] = text(action, "description")
         fields["payment_method"] = text(action, "payment_method", "SBI") or "SBI"
@@ -93,10 +96,10 @@ def _transaction_fields(action: dict, *, creating: bool, context: dict | None = 
             raise ValueError("A transaction is either income or expense.")
         fields["kind"] = kind
     if "amount" in action:
-        amount = num(action, "amount")
-        if amount <= 0:
+        amount = to_money(num(action, "amount"))
+        if amount <= ZERO:
             raise ValueError("A transaction needs an amount greater than zero.")
-        fields["amount"] = round(amount, 2)
+        fields["amount"] = amount
     for key in ("category", "description", "payment_method"):
         if key in action:
             fields[key] = text(action, key)
@@ -109,11 +112,11 @@ def _budget_fields(action: dict, *, creating: bool, context: dict | None = None)
     fields: dict = {}
     if creating:
         fields["category"] = text(action, "category") or "Other"
-        fields["monthly_limit"] = round(num(action, "monthly_limit"), 2)
+        fields["monthly_limit"] = to_money(num(action, "monthly_limit"))
         fields["month"] = month(action, today=_business_today(context))
         return fields
     if "monthly_limit" in action:
-        fields["monthly_limit"] = round(num(action, "monthly_limit"), 2)
+        fields["monthly_limit"] = to_money(num(action, "monthly_limit"))
     if "category" in action:
         fields["category"] = text(action, "category")
     if "month" in action:
@@ -125,15 +128,15 @@ def _goal_fields(action: dict, *, creating: bool, context: dict | None = None) -
     fields: dict = {}
     if creating:
         fields["name"] = text(action, "name") or "Goal"
-        fields["target_amount"] = round(num(action, "target_amount"), 2)
-        fields["saved_amount"] = round(num(action, "saved_amount", 0), 2)
+        fields["target_amount"] = to_money(num(action, "target_amount"))
+        fields["saved_amount"] = to_money(num(action, "saved_amount", 0))
         fields["target_date"] = date_value(action, "target_date", None)
         return fields
     if "name" in action:
         fields["name"] = text(action, "name")
     for key in ("target_amount", "saved_amount"):
         if key in action:
-            fields[key] = round(num(action, key), 2)
+            fields[key] = to_money(num(action, key))
     if "target_date" in action:
         fields["target_date"] = date_value(action, "target_date", None)
     return fields
@@ -142,11 +145,11 @@ def _goal_fields(action: dict, *, creating: bool, context: dict | None = None) -
 def _investment_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
-        invested = round(num(action, "invested_amount", 0), 2)
+        invested = to_money(num(action, "invested_amount", 0))
         fields["name"] = text(action, "name") or "Investment"
         fields["asset_type"] = text(action, "asset_type", "Mutual Fund") or "Mutual Fund"
         fields["invested_amount"] = invested
-        fields["current_value"] = round(num(action, "current_value", invested), 2)
+        fields["current_value"] = to_money(num(action, "current_value", invested))
         fields["notes"] = text(action, "notes")
         return fields
     for key in ("name", "asset_type", "notes"):
@@ -154,7 +157,7 @@ def _investment_fields(action: dict, *, creating: bool, context: dict | None = N
             fields[key] = text(action, key)
     for key in ("invested_amount", "current_value"):
         if key in action:
-            fields[key] = round(num(action, key), 2)
+            fields[key] = to_money(num(action, key))
     return fields
 
 
@@ -163,8 +166,8 @@ def _liability_fields(action: dict, *, creating: bool, context: dict | None = No
     if creating:
         fields["name"] = text(action, "name") or "Liability"
         fields["liability_type"] = text(action, "liability_type", "Loan") or "Loan"
-        fields["outstanding_amount"] = round(num(action, "outstanding_amount", 0), 2)
-        fields["monthly_emi"] = round(num(action, "monthly_emi", 0), 2)
+        fields["outstanding_amount"] = to_money(num(action, "outstanding_amount", 0))
+        fields["monthly_emi"] = to_money(num(action, "monthly_emi", 0))
         fields["notes"] = text(action, "notes")
         return fields
     for key in ("name", "liability_type", "notes"):
@@ -172,7 +175,7 @@ def _liability_fields(action: dict, *, creating: bool, context: dict | None = No
             fields[key] = text(action, key)
     for key in ("outstanding_amount", "monthly_emi"):
         if key in action:
-            fields[key] = round(num(action, key), 2)
+            fields[key] = to_money(num(action, key))
     return fields
 
 
@@ -285,10 +288,12 @@ def _result(op: str, kind: str, *, success: bool, verified: bool = False,
 
 
 def _same(left, right) -> bool:
-    if isinstance(left, float) or isinstance(right, float):
+    """Quantise both sides to paise, then compare — no tolerance to hide drift."""
+    if isinstance(left, (float, Decimal, int)) and not isinstance(left, bool) \
+            or isinstance(right, (float, Decimal, int)) and not isinstance(right, bool):
         try:
-            return abs(float(left) - float(right)) < 0.005
-        except (TypeError, ValueError):
+            return to_money(left) == to_money(right)
+        except MoneyError:
             return left == right
     if isinstance(left, str) and isinstance(right, str):
         return left.strip() == right.strip()

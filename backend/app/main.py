@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from .database import Base, engine, get_db
 from . import models, schemas
+from . import money
 from .timeutil import iso_utc, utcnow
 from .tz import user_today
 from .security import hash_password, verify_password, create_access_token, get_current_user
@@ -124,12 +125,12 @@ def dashboard(
         budget_month = cur_m
 
     txns = q.all()
-    income = sum(t.amount for t in txns if t.kind == "income")
-    expenses = sum(t.amount for t in txns if t.kind == "expense")
+    income = money.total(t.amount for t in txns if t.kind == "income")
+    expenses = money.total(t.amount for t in txns if t.kind == "expense")
     by_category = {}
     for t in txns:
         if t.kind == "expense":
-            by_category[t.category] = by_category.get(t.category, 0) + t.amount
+            by_category[t.category] = by_category.get(t.category, money.ZERO) + t.amount
     investments = db.query(models.Investment).filter_by(user_id=user.id).all()
     liabilities = db.query(models.Liability).filter_by(user_id=user.id).all()
     budget_rows = db.query(models.Budget).filter_by(user_id=user.id, month=budget_month).all()
@@ -139,26 +140,29 @@ def dashboard(
     budgets = []
     for b in budget_rows:
         spent = by_category.get(b.category, 0)
-        budgets.append({"id": b.id, "category": b.category, "monthly_limit": b.monthly_limit, "spent": spent, "remaining": b.monthly_limit-spent})
+        budgets.append({"id": b.id, "category": b.category, "monthly_limit": money.number(b.monthly_limit),
+                        "spent": money.number(spent), "remaining": money.number(b.monthly_limit - spent)})
     return {
         "period": period_label,
         "month": month or budget_month,
-        "income": round(income, 2),
-        "expenses": round(expenses, 2),
-        "savings": round(income - expenses, 2),
-        "savings_rate": round(((income-expenses)/income)*100, 1) if income else 0,
-        "investment_value": sum(i.current_value for i in investments),
-        "investment_cost": sum(i.invested_amount for i in investments),
-        "liabilities": sum(l.outstanding_amount for l in liabilities),
-        "net_worth": sum(i.current_value for i in investments) - sum(l.outstanding_amount for l in liabilities),
-        "category_expenses": [{"category": k, "amount": round(v, 2)} for k, v in sorted(by_category.items(), key=lambda x: x[1], reverse=True)],
+        "income": money.number(income),
+        "expenses": money.number(expenses),
+        "savings": money.number(income - expenses),
+        "savings_rate": round(float((income - expenses) / income * 100), 1) if income else 0,
+        "investment_value": money.number(money.total(i.current_value for i in investments)),
+        "investment_cost": money.number(money.total(i.invested_amount for i in investments)),
+        "liabilities": money.number(money.total(l.outstanding_amount for l in liabilities)),
+        "net_worth": money.number(money.total(i.current_value for i in investments)
+                                   - money.total(l.outstanding_amount for l in liabilities)),
+        "category_expenses": [{"category": k, "amount": money.number(v)}
+                              for k, v in sorted(by_category.items(), key=lambda x: x[1], reverse=True)],
         "budgets": budgets,
         "recent_transactions": [txn_dict(t) for t in sorted(txns, key=lambda x: x.txn_date, reverse=True)[:10]],
         "total_txns": len(txns),
     }
 
 def txn_dict(t):
-    return {"id":t.id,"kind":t.kind,"amount":t.amount,"category":t.category,"description":t.description,"payment_method":t.payment_method,"txn_date":t.txn_date.isoformat()}
+    return {"id":t.id,"kind":t.kind,"amount":money.number(t.amount),"category":t.category,"description":t.description,"payment_method":t.payment_method,"txn_date":t.txn_date.isoformat()}
 
 @app.get("/api/transactions")
 def list_transactions(
@@ -238,20 +242,20 @@ def budgets(month: str | None = None, db: Session=Depends(get_db), user=Depends(
                 models.Transaction.category == x.category,
                 func.to_char(models.Transaction.txn_date, "YYYY-MM") == m
             ).scalar()
-        spent = round(float(spent), 2)
+        spent = money.to_money(spent, default=money.ZERO)
         res.append({
             "id": x.id,
             "category": x.category,
-            "monthly_limit": x.monthly_limit,
+            "monthly_limit": money.number(x.monthly_limit),
             "month": x.month or m,
-            "spent": spent,
-            "remaining": round(x.monthly_limit - spent, 2)
+            "spent": money.number(spent),
+            "remaining": money.number(x.monthly_limit - spent)
         })
     return res
 
 @app.post("/api/budgets")
 def add_budget(data: schemas.BudgetIn, db: Session=Depends(get_db), user=Depends(get_current_user)):
-    item=models.Budget(user_id=user.id,**data.model_dump()); db.add(item); db.commit(); db.refresh(item); return {"id":item.id,"category":item.category,"monthly_limit":item.monthly_limit,"month":item.month}
+    item=models.Budget(user_id=user.id,**data.model_dump()); db.add(item); db.commit(); db.refresh(item); return {"id":item.id,"category":item.category,"monthly_limit":money.number(item.monthly_limit),"month":item.month}
 
 @app.delete("/api/budgets/{item_id}")
 def delete_budget(item_id:int, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -259,7 +263,7 @@ def delete_budget(item_id:int, db:Session=Depends(get_db), user=Depends(get_curr
 
 @app.get("/api/goals")
 def goals(db:Session=Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":x.id,"name":x.name,"target_amount":x.target_amount,"saved_amount":x.saved_amount,"target_date":x.target_date.isoformat() if x.target_date else None} for x in db.query(models.Goal).filter_by(user_id=user.id).all()]
+    return [{"id":x.id,"name":x.name,"target_amount":money.number(x.target_amount),"saved_amount":money.number(x.saved_amount),"target_date":x.target_date.isoformat() if x.target_date else None} for x in db.query(models.Goal).filter_by(user_id=user.id).all()]
 
 @app.post("/api/goals")
 def add_goal(data:schemas.GoalIn, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -271,7 +275,7 @@ def delete_goal(item_id:int, db:Session=Depends(get_db), user=Depends(get_curren
 
 @app.get("/api/investments")
 def investments(db:Session=Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":x.id,"name":x.name,"asset_type":x.asset_type,"invested_amount":x.invested_amount,"current_value":x.current_value,"notes":x.notes} for x in db.query(models.Investment).filter_by(user_id=user.id).all()]
+    return [{"id":x.id,"name":x.name,"asset_type":x.asset_type,"invested_amount":money.number(x.invested_amount),"current_value":money.number(x.current_value),"notes":x.notes} for x in db.query(models.Investment).filter_by(user_id=user.id).all()]
 
 @app.post("/api/investments")
 def add_investment(data:schemas.InvestmentIn, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -283,7 +287,7 @@ def delete_investment(item_id:int, db:Session=Depends(get_db), user=Depends(get_
 
 @app.get("/api/liabilities")
 def liabilities(db:Session=Depends(get_db), user=Depends(get_current_user)):
-    return [{"id":x.id,"name":x.name,"liability_type":x.liability_type,"outstanding_amount":x.outstanding_amount,"monthly_emi":x.monthly_emi,"notes":x.notes} for x in db.query(models.Liability).filter_by(user_id=user.id).all()]
+    return [{"id":x.id,"name":x.name,"liability_type":x.liability_type,"outstanding_amount":money.number(x.outstanding_amount),"monthly_emi":money.number(x.monthly_emi),"notes":x.notes} for x in db.query(models.Liability).filter_by(user_id=user.id).all()]
 
 @app.post("/api/liabilities")
 def add_liability(data:schemas.LiabilityIn, db:Session=Depends(get_db), user=Depends(get_current_user)):
@@ -317,8 +321,8 @@ def cashflow(months: int = Query(default=6, ge=1, le=24), db: Session = Depends(
                 models.Transaction.user_id == user.id,
                 func.to_char(models.Transaction.txn_date, "YYYY-MM") == month_str
             ).all()
-        inc = round(sum(t.amount for t in txns if t.kind == "income"), 2)
-        exp = round(sum(t.amount for t in txns if t.kind == "expense"), 2)
+        inc = money.number(money.total(t.amount for t in txns if t.kind == "income"))
+        exp = money.number(money.total(t.amount for t in txns if t.kind == "expense"))
         label = f"{cal_mod.month_abbr[m]} '{str(y)[2:]}"
         result.append({"month": month_str, "label": label, "income": inc, "expense": exp})
     return result
@@ -384,27 +388,27 @@ def analytics(
         by_payment_cnt[pm] = by_payment_cnt.get(pm, 0) + 1
         if t.kind == "expense":
             exp_txns_count += 1
-            by_cat[t.category] = by_cat.get(t.category, 0) + t.amount
+            by_cat[t.category] = by_cat.get(t.category, money.ZERO) + t.amount
             by_cat_cnt[t.category] = by_cat_cnt.get(t.category, 0) + 1
-            by_payment_exp[pm] = by_payment_exp.get(pm, 0) + t.amount
+            by_payment_exp[pm] = by_payment_exp.get(pm, money.ZERO) + t.amount
             by_payment_exp_cnt[pm] = by_payment_exp_cnt.get(pm, 0) + 1
         elif t.kind == "income":
             inc_txns_count += 1
-            by_payment_inc[pm] = by_payment_inc.get(pm, 0) + t.amount
+            by_payment_inc[pm] = by_payment_inc.get(pm, money.ZERO) + t.amount
             by_payment_inc_cnt[pm] = by_payment_inc_cnt.get(pm, 0) + 1
 
-    total_exp = sum(by_cat.values())
-    total_inc = sum(t.amount for t in txns if t.kind == "income")
-    avg_expense_per_txn = round(total_exp / exp_txns_count, 2) if exp_txns_count else 0
-    avg_income_per_txn = round(total_inc / inc_txns_count, 2) if inc_txns_count else 0
+    total_exp = money.total(by_cat.values())
+    total_inc = money.total(t.amount for t in txns if t.kind == "income")
+    avg_expense_per_txn = money.number(total_exp / exp_txns_count) if exp_txns_count else 0
+    avg_income_per_txn = money.number(total_inc / inc_txns_count) if inc_txns_count else 0
 
     categories = [
         {
             "category": k,
-            "amount": round(v, 2),
+            "amount": money.number(v),
             "txns": by_cat_cnt.get(k, 0),
-            "avg": round(v / by_cat_cnt[k], 2) if by_cat_cnt.get(k, 0) else 0,
-            "pct": round(v / total_exp * 100, 1) if total_exp else 0,
+            "avg": money.number(v / by_cat_cnt[k]) if by_cat_cnt.get(k, 0) else 0,
+            "pct": round(float(v / total_exp * 100), 1) if total_exp else 0,
         }
         for k, v in sorted(by_cat.items(), key=lambda x: x[1], reverse=True)
     ]
@@ -413,16 +417,16 @@ def analytics(
     payment_breakdown = [
         {
             "payment_method": k,
-            "amount": round(by_payment_exp.get(k, 0), 2),
-            "income": round(by_payment_inc.get(k, 0), 2),
-            "net": round(by_payment_inc.get(k, 0) - by_payment_exp.get(k, 0), 2),
+            "amount": money.number(by_payment_exp.get(k, money.ZERO)),
+            "income": money.number(by_payment_inc.get(k, money.ZERO)),
+            "net": money.number(by_payment_inc.get(k, money.ZERO) - by_payment_exp.get(k, money.ZERO)),
             "txns": by_payment_cnt.get(k, 0),
             "exp_txns": by_payment_exp_cnt.get(k, 0),
             "inc_txns": by_payment_inc_cnt.get(k, 0),
-            "avg": round(by_payment_exp.get(k, 0) / by_payment_exp_cnt[k], 2) if by_payment_exp_cnt.get(k, 0) else 0,
-            "avg_income": round(by_payment_inc.get(k, 0) / by_payment_inc_cnt[k], 2) if by_payment_inc_cnt.get(k, 0) else 0,
-            "avg_overall": round((by_payment_exp.get(k, 0) + by_payment_inc.get(k, 0)) / by_payment_cnt[k], 2) if by_payment_cnt.get(k, 0) else 0,
-            "pct": round(by_payment_exp.get(k, 0) / total_exp * 100, 1) if total_exp else 0,
+            "avg": money.number(by_payment_exp.get(k, money.ZERO) / by_payment_exp_cnt[k]) if by_payment_exp_cnt.get(k, 0) else 0,
+            "avg_income": money.number(by_payment_inc.get(k, money.ZERO) / by_payment_inc_cnt[k]) if by_payment_inc_cnt.get(k, 0) else 0,
+            "avg_overall": money.number((by_payment_exp.get(k, money.ZERO) + by_payment_inc.get(k, money.ZERO)) / by_payment_cnt[k]) if by_payment_cnt.get(k, 0) else 0,
+            "pct": round(float(by_payment_exp.get(k, money.ZERO) / total_exp * 100), 1) if total_exp else 0,
         }
         for k in sorted(all_methods, key=lambda x: (by_payment_exp.get(x, 0), by_payment_cnt.get(x, 0)), reverse=True)
     ]
@@ -430,8 +434,8 @@ def analytics(
     return {
         "from": from_label,
         "to": to_label,
-        "total_income": round(total_inc, 2),
-        "total_expense": round(total_exp, 2),
+        "total_income": money.number(total_inc),
+        "total_expense": money.number(total_exp),
         "total_txns": len(txns),
         "exp_txns": exp_txns_count,
         "inc_txns": inc_txns_count,
@@ -491,12 +495,18 @@ def _from_tags(value):
 
 
 def _num(value):
+    """A nullable monetary value: quantised to paise, None when absent.
+
+    A journal entry may carry no amount at all; anything that is present must be a
+    real amount, so a value the column cannot hold is refused instead of being
+    dropped to NULL.
+    """
     if value in (None, "", False):
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+        return money.require_money(value, field="amount")
+    except money.MoneyError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def _note_out(n: models.Note):
@@ -520,7 +530,7 @@ def _task_out(t: models.Task):
 def _journal_out(e: models.JournalEntry):
     return {
         "id": e.id, "title": e.title, "description": e.description,
-        "category": e.category, "mood": e.mood, "amount": e.amount,
+        "category": e.category, "mood": e.mood, "amount": money.number(e.amount),
         "date": _iso(e.event_date), "tags": _from_tags(e.tags),
         "createdAt": iso_utc(e.created_at),
         "updatedAt": iso_utc(e.updated_at),

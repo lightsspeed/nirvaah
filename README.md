@@ -141,6 +141,23 @@ batch back and an advisory lock stops two runners from racing. Nothing is applie
 at container start, so a deploy never issues DDL against a live database, and a
 freshly created database needs this command once.
 
+A file may declare `-- dialect: postgresql` in its first lines. That file is then
+applied to PostgreSQL only (the SQLite database the tests use skips it) and may
+contain several statements. `0002_money_numeric_14_2.sql` is one: it refuses to
+run at all if any amount is NaN, infinite, wider than `numeric(14,2)`, or a
+positive-only column that would round to `0.00`, then converts all nine money
+columns and adds a CHECK constraint to each.
+
+## Money
+
+Money is stored as `numeric(14,2)` and handled as Python `Decimal` — never a
+float. `backend/app/money.py` is the single place that converts: it reads floats
+through their shortest decimal form (`Decimal(str(value))`, so `10.005` means what
+the client typed), quantises to paise with `ROUND_HALF_UP`, enforces the column's
+range, and refuses a positive amount that would become zero. API responses still
+carry JSON **numbers**, not strings, so the frontend needs no change. The maximum
+a money column holds is `999,999,999,999.99`.
+
 ## Assistant reliability layer
 
 The assistant is structured so that nothing it says can get ahead of the
