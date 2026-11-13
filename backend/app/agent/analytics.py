@@ -373,13 +373,35 @@ def available_range(db: Session, user) -> dict:
 
 # ── transaction analytics ────────────────────────────────────────────────────
 
-def merchants(db: Session, user, month: str | None = None, limit: int = 8) -> dict:
+def merchants(db: Session, user, month: str | None = None, limit: int = 8, *,
+              category: str | None = None, kind: str = "expense") -> dict:
+    """Top merchants for a window, optionally restricted to one category.
+
+    ``category`` is resolved against the user's real categories with the same
+    matcher the rest of the module uses; the filter runs in SQL, so the rows
+    never leave the database. ``kind`` defaults to expense, matching the
+    original behaviour; pass None for both sides of the ledger.
+    """
     start = end = None
     if month:
         start, end = month_bounds(month)
+    matched: list[str] = []
+    if category:
+        matched = match_categories(db, user, category)
+        if not matched:
+            return {
+                "status": "unknown_category",
+                "month": month,
+                "category": category,
+                "scope": "all categories",
+                "known_categories": categories(db, user),
+                "message": f'You have never used a category called "{category}".',
+            }
+    scope = ", ".join(matched) if matched else "all categories"
+    matched_label = ", ".join(matched) if matched else None
     name = func.lower(func.trim(models.Transaction.description))
     rows = (
-        _filtered(db, user, start=start, end=end, kind="expense")
+        _filtered(db, user, start=start, end=end, kind=kind or None, categories=matched or None)
         .filter(func.trim(models.Transaction.description) != "")
         .with_entities(
             name.label("merchant_key"),
@@ -393,7 +415,7 @@ def merchants(db: Session, user, month: str | None = None, limit: int = 8) -> di
         .all()
     )
     if not rows:
-        return {"status": "no_data", "month": month}
+        return {"status": "no_data", "month": month, "category": matched_label, "scope": scope}
     ranked = [
         {"merchant": label, "total": money.number(money.to_money(total, default=money.ZERO)),
          "count": int(count or 0), "_first": int(first_id or 0)}
@@ -410,19 +432,20 @@ def merchants(db: Session, user, month: str | None = None, limit: int = 8) -> di
     first_category: dict[str, str] = {}
     if wanted:
         key = func.lower(func.trim(models.Transaction.description))
-        for merchant_key, category in (
-            _filtered(db, user, start=start, end=end, kind="expense")
+        for merchant_key, row_category in (
+            _filtered(db, user, start=start, end=end, kind=kind or None, categories=matched or None)
             .filter(key.in_(sorted(wanted)))
             .with_entities(key, models.Transaction.category)
             .order_by(models.Transaction.id.asc())
             .all()
         ):
-            first_category.setdefault(merchant_key, category)
+            first_category.setdefault(merchant_key, row_category)
     for entry in ranked:
         entry["category"] = first_category.get(entry["merchant"].strip().lower())
         entry.pop("_first", None)
 
-    return {"status": "ok", "month": month, "merchants": top, "most_frequent": frequent}
+    return {"status": "ok", "month": month, "category": matched_label, "scope": scope,
+            "merchants": top, "most_frequent": frequent}
 
 
 def recurring(db: Session, user, min_months: int = 3) -> dict:

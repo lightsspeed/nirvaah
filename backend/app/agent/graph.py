@@ -135,13 +135,12 @@ def _fit_facts(facts: dict, limit: int) -> dict:
     return trimmed
 
 
-def _thread_context_line(prior: dict | None, carried: dict, intent: str | None) -> str:
+def _thread_context_line(prior: dict | None, carried: dict) -> str:
     """The prompt line for filters carried in from earlier turns, if there are any."""
     if not isinstance(prior, dict) or not (prior.get("category") or prior.get("month")):
         return ""
     parts = []
-    # merchants() is not category-filtered, so naming a category would mislead.
-    if carried.get("category") and intent != "merchants":
+    if carried.get("category"):
         parts.append(f"category={carried['category']}")
     if carried.get("month"):
         parts.append(f"month={carried['month']}")
@@ -209,7 +208,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
         # filters now", an explicit None means "the user stepped out of the thread".
         settled = analysis.get("context")
         carried = settled if isinstance(settled, dict) else {}
-        system += _thread_context_line(thread_context, carried, analysis.get("intent"))
+        system += _thread_context_line(thread_context, carried)
         if current_focus:
             system += (
                 "\n\nCURRENT FOCUS: this conversation is about "

@@ -374,11 +374,18 @@ def analyse(db: Session, user, message: str, today: date | None = None,
     try:
         # "which merchant contributed most?" is a question about merchants, even
         # when the category and month were inherited — answer the question asked.
-        if re.search(r"\bmerchant|where did i spend|who did i pay|most frequent\b", text):
-            facts = analytics.merchants(db, user, month)
-            # merchants() has no category filter, so the answer covers every category.
-            facts = {**facts, "category": None, "scope": "all categories"}
-            return done("merchants", {"month": month}, facts)
+        # A correction or a switch on a merchant thread stays a merchant question.
+        thread_intent = context.get("intent") if isinstance(context, dict) else None
+        asks_merchants = bool(
+            re.search(r"\bmerchant|where did i spend|who did i pay|most frequent\b", text)
+        ) or (thread_intent == "merchants"
+              and bool(_CORRECTION.search(text) or _SWITCH_CUE.search(message)))
+        if asks_merchants:
+            # The settled category/kind, not the raw message: an inherited or
+            # corrected filter must reach the query, and its absence means "all".
+            facts = analytics.merchants(db, user, month, category=category,
+                                        kind=kind or "expense")
+            return done("merchants", {"month": month, "category": category}, facts)
 
         if category and month:
             return done("category_month", {"category": category, "month": month},

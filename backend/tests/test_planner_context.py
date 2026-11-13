@@ -422,11 +422,18 @@ def test_merchants_disclose_their_scope(db, groceries, conversation, scripted):
                             turn=2, chat_context=context())
     facts = result["analytics"]["facts"]
 
-    assert facts["scope"] == "all categories"
-    assert facts["category"] is None
-    assert '"scope": "all categories"' in result["system"]
-    assert "THREAD CONTEXT: category=Groceries" not in result["system"]
-    assert "THREAD CONTEXT: month=2026-04" in result["system"]
+    # The thread carries Groceries, so the merchant query is filtered to it and says so.
+    assert facts["scope"] == "Groceries"
+    assert facts["category"] == "Groceries"
+    assert '"scope": "Groceries"' in result["system"]
+    assert "THREAD CONTEXT: category=Groceries month=2026-04" in result["system"]
+
+
+def test_merchants_without_a_thread_report_all_categories(db, groceries):
+    analysis = planner.analyse(db, groceries, "Which merchant contributed most?", today=TODAY)
+
+    assert analysis["facts"]["scope"] == "all categories"
+    assert analysis["facts"]["category"] is None
 
 
 # M2: "all expenses" steps out of the category but keeps the month.
@@ -533,3 +540,83 @@ def test_an_unknown_category_keeps_the_previous_context(db, groceries):
                                 context=analysis["context"], turn=3)
     assert corrected["facts"]["categories"] == ["Fuel"]
     assert corrected["facts"]["month"] == "2026-04"
+
+
+# ── F. category-aware merchant analytics (Task 27.3) ───────────────────────
+
+@pytest.fixture()
+def merchant_thread(db, user):
+    """May: two grocery merchants, one restaurant, one fuel; April groceries."""
+    rows = [
+        ("Groceries", "BigBasket", 900, date(2026, 5, 3)),
+        ("Groceries", "More Supermarket", 600, date(2026, 5, 9)),
+        ("Restaurants", "Truffles", 1200, date(2026, 5, 12)),
+        ("Fuel", "HP Petrol", 1500, date(2026, 5, 5)),
+        ("Groceries", "BigBasket", 700, date(2026, 4, 20)),
+    ]
+    for category, description, amount, when in rows:
+        db.add(models.Transaction(user_id=user.id, kind="expense", amount=Decimal(str(amount)),
+                                  category=category, description=description,
+                                  payment_method="UPI", txn_date=when))
+    db.commit()
+    return user
+
+
+def test_the_merchant_thread_filters_by_the_thread_category(db, merchant_thread, client, scripted):
+    model = scripted({"reply": "ok", "actions": []})
+    conversation_id = _conversation(client)
+
+    _ask(client, conversation_id, "Show my grocery spending in May.")
+    assert "2026-05" in model.last_system
+
+    facts = json.JSONDecoder().raw_decode(
+        model.last_system.rsplit("FACTS: ", 1)[-1].lstrip())[0]
+    # whatever turn 1 answered, the thread now carries Groceries + May
+    assert facts.get("month") == "2026-05"
+
+    _ask(client, conversation_id, "Which merchant contributed most?")
+    facts = json.JSONDecoder().raw_decode(
+        model.last_system.rsplit("FACTS: ", 1)[-1].lstrip())[0]
+    assert facts["scope"] == "Groceries"
+    assert facts["month"] == "2026-05"
+    assert {m["merchant"] for m in facts["merchants"]} == {"BigBasket", "More Supermarket"}
+
+    _ask(client, conversation_id, "No, I meant restaurants.")
+    facts = json.JSONDecoder().raw_decode(
+        model.last_system.rsplit("FACTS: ", 1)[-1].lstrip())[0]
+    assert facts["scope"] == "Restaurants"
+    assert facts["month"] == "2026-05"
+    assert [m["merchant"] for m in facts["merchants"]] == ["Truffles"]
+
+    _ask(client, conversation_id, "Which merchant contributed most overall?")
+    facts = json.JSONDecoder().raw_decode(
+        model.last_system.rsplit("FACTS: ", 1)[-1].lstrip())[0]
+    assert facts["scope"] == "all categories"
+    assert facts["month"] is None
+    assert {m["merchant"] for m in facts["merchants"]} >= {"Truffles", "HP Petrol"}
+
+
+def test_merchant_intent_uses_the_inherited_category(db, merchant_thread):
+    prior = {"intent": "category_month", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 1, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread, "Which merchant contributed most?", today=TODAY,
+                               context=prior, turn=2)
+
+    assert analysis["intent"] == "merchants"
+    assert analysis["facts"]["category"] == "Groceries"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert analysis["facts"]["merchants"][0]["category"] == "Groceries"
+
+
+def test_merchant_correction_replaces_the_category_and_keeps_the_month(db, merchant_thread):
+    prior = {"intent": "merchants", "category": "Groceries", "month": "2026-05",
+             "kind": "expense", "comparison_target": None, "turn": 2, "updated_at": "x"}
+
+    analysis = planner.analyse(db, merchant_thread, "No, I meant restaurants.", today=TODAY,
+                               context=prior, turn=3)
+
+    assert analysis["facts"]["category"] == "Restaurants"
+    assert analysis["facts"]["scope"] == "Restaurants"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert [m["merchant"] for m in analysis["facts"]["merchants"]] == ["Truffles"]

@@ -151,6 +151,121 @@ def test_multiple_categories_are_summed_separately(db, ledger):
 
 # ── transaction-level answers ───────────────────────────────────────────────
 
+@pytest.fixture()
+def merchant_ledger(db):
+    """One user, May and April, merchants spread across four categories."""
+    user = models.User(name="Merchants", email="merchants@local.dev", password_hash="x")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    rows = [
+        ("expense", 900.00, "Groceries", "BigBasket", "UPI", date(2026, 5, 3)),
+        ("expense", 600.00, "Groceries", "More Supermarket", "UPI", date(2026, 5, 9)),
+        ("expense", 1500.00, "Fuel", "HP Petrol", "SBI", date(2026, 5, 5)),
+        ("expense", 800.00, "Dining Out", "Pizza Hut", "SBI", date(2026, 5, 7)),
+        ("expense", 1200.00, "Electricity", "BESCOM", "SBI", date(2026, 5, 11)),
+        ("expense", 700.00, "Groceries", "BigBasket", "UPI", date(2026, 4, 20)),
+        ("income", 5000.00, "Salary", "Employer", "SBI", date(2026, 5, 1)),
+    ]
+    for kind, amount, category, description, method, when in rows:
+        db.add(models.Transaction(user_id=user.id, kind=kind, amount=amount, category=category,
+                                  description=description, payment_method=method, txn_date=when))
+    db.commit()
+    return user
+
+
+def test_merchants_without_a_category_are_unchanged(db, merchant_ledger):
+    facts = analytics.merchants(db, merchant_ledger, "2026-05")
+
+    assert [(m["merchant"], m["total"]) for m in facts["merchants"]] == [
+        ("HP Petrol", 1500.0),
+        ("BESCOM", 1200.0),
+        ("BigBasket", 900.0),
+        ("Pizza Hut", 800.0),
+        ("More Supermarket", 600.0),
+    ]
+    assert facts["scope"] == "all categories"
+    assert facts["category"] is None
+
+
+def test_merchants_filtered_by_category_exclude_other_categories(db, merchant_ledger):
+    facts = analytics.merchants(db, merchant_ledger, "2026-05", category="Groceries")
+
+    assert [(m["merchant"], m["total"]) for m in facts["merchants"]] == [
+        ("BigBasket", 900.0),
+        ("More Supermarket", 600.0),
+    ]
+    assert {m["category"] for m in facts["merchants"]} == {"Groceries"}
+    assert facts["scope"] == "Groceries"
+    assert facts["category"] == "Groceries"
+
+
+def test_merchants_category_and_month_filter_together(db, merchant_ledger):
+    may = analytics.merchants(db, merchant_ledger, "2026-05", category="Groceries")
+    everything = analytics.merchants(db, merchant_ledger, category="Groceries")
+
+    assert [m["total"] for m in may["merchants"]] == [900.0, 600.0]
+    assert [(m["merchant"], m["total"]) for m in everything["merchants"]] == [
+        ("BigBasket", 1600.0),
+        ("More Supermarket", 600.0),
+    ]
+    assert everything["month"] is None
+
+
+def test_merchants_category_matching_normalises_the_name(db, merchant_ledger):
+    canonical = analytics.merchants(db, merchant_ledger, "2026-05", category="Groceries")
+    for spelling in ("groceries", "GROCERIES", "Groceries "):
+        facts = analytics.merchants(db, merchant_ledger, "2026-05", category=spelling)
+        assert facts["merchants"] == canonical["merchants"]
+        assert facts["scope"] == "Groceries"
+
+
+def test_merchants_category_respects_the_kind(db, merchant_ledger):
+    income = analytics.merchants(db, merchant_ledger, "2026-05", category="Salary", kind="income")
+    expense = analytics.merchants(db, merchant_ledger, "2026-05", category="Salary")
+
+    assert [(m["merchant"], m["total"]) for m in income["merchants"]] == [("Employer", 5000.0)]
+    assert expense["status"] == "no_data"
+    assert expense["scope"] == "Salary"
+
+
+def test_merchants_unknown_category_is_reported_not_empty(db, merchant_ledger):
+    facts = analytics.merchants(db, merchant_ledger, "2026-05", category="Yachts")
+
+    assert facts["status"] == "unknown_category"
+    assert "Groceries" in facts["known_categories"]
+    assert "merchants" not in facts
+
+
+def test_merchants_empty_category_month_is_safe(db, merchant_ledger):
+    facts = analytics.merchants(db, merchant_ledger, "2019-01", category="Groceries")
+
+    assert facts == {"status": "no_data", "month": "2019-01",
+                     "category": "Groceries", "scope": "Groceries"}
+
+
+def test_merchants_category_keeps_ordering_and_limit(db, merchant_ledger):
+    facts = analytics.merchants(db, merchant_ledger, "2026-05", limit=2, category="Groceries")
+
+    assert [m["merchant"] for m in facts["merchants"]] == ["BigBasket", "More Supermarket"]
+    assert [m["total"] for m in facts["merchants"]] == sorted(
+        [m["total"] for m in facts["merchants"]], reverse=True)
+
+
+def test_merchants_category_stays_inside_the_user(db, merchant_ledger):
+    other = models.User(name="Other", email="other-merchant@local.dev", password_hash="x")
+    db.add(other)
+    db.commit()
+    db.refresh(other)
+    db.add(models.Transaction(user_id=other.id, kind="expense", amount=9999.00, category="Groceries",
+                              description="NotMine", payment_method="UPI", txn_date=date(2026, 5, 15)))
+    db.commit()
+
+    facts = analytics.merchants(db, merchant_ledger, "2026-05", category="Groceries")
+
+    assert "NotMine" not in {m["merchant"] for m in facts["merchants"]}
+
+
 def test_merchants_and_frequency(db, ledger):
     facts = analytics.merchants(db, ledger)
     assert facts["merchants"] == [{"merchant": "cafe", "total": 350.0, "count": 3, "category": "Food"}]
@@ -241,7 +356,9 @@ def test_empty_ledger_answers(db, empty_user):
     assert analytics.text_exists(db, empty_user, "anything") is False
     assert analytics.monthly_series(db, empty_user) == {"status": "no_data"}
     assert analytics.extremes(db, empty_user) == {"status": "no_data"}
-    assert analytics.merchants(db, empty_user) == {"status": "no_data", "month": None}
+    assert analytics.merchants(db, empty_user) == {
+        "status": "no_data", "month": None, "category": None, "scope": "all categories",
+    }
     assert analytics.recurring(db, empty_user) == {"status": "no_data"}
     assert analytics.category_by_month(db, empty_user, "2026-03") == {"status": "no_data", "month": "2026-03"}
     assert analytics.highest_transactions(db, empty_user) == {"status": "no_data", "month": None}
