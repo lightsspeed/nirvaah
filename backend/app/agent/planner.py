@@ -185,9 +185,5 @@ def analyse(db: Session, user, message: str, today: date | None = None) -> dict:
 
 
 def available_range(db: Session, user) -> dict:
-    rows = analytics._rows(db, user)  # noqa: SLF001 - same package, deliberate
-    if not rows:
-        return {"status": "no_data"}
-    months = sorted({r.txn_date.strftime("%Y-%m") for r in rows if r.txn_date})
-    return {"status": "ok", "first_month": months[0], "last_month": months[-1],
-            "months": len(months), "transactions": len(rows)}
+    """First/last month and a row count — one aggregate, no ledger in memory."""
+    return analytics.available_range(db, user)

@@ -19,6 +19,7 @@ import re
 from calendar import monthrange
 from datetime import date, timedelta
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from . import models
@@ -44,9 +45,27 @@ def _txns_between(db: Session, user, start: date, end: date):
     )
 
 
+def _snapshot_month_expr(db: Session):
+    """'YYYY-MM' for txn_date, in whatever dialect this session is bound to."""
+    txn_date = models.Transaction.txn_date
+    if db.get_bind().dialect.name == "sqlite":
+        return func.strftime("%Y-%m", txn_date)
+    return func.to_char(txn_date, "YYYY-MM")
+
+
+def _snapshot_kind_expr():
+    """income stays income; every other kind counts as expense."""
+    return case((models.Transaction.kind == "income", "income"), else_="expense")
+
+
 def _totals(rows) -> dict:
     income = sum(t.amount for t in rows if t.kind == "income")
     expense = sum(t.amount for t in rows if t.kind == "expense")
+    return _totals_from_sums(income, expense)
+
+
+def _totals_from_sums(income: float, expense: float) -> dict:
+    """The same arithmetic, for figures the database already summed."""
     return {
         "income": round(income, 2),
         "expense": round(expense, 2),
@@ -71,15 +90,36 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
 
     this_month = _txns_between(db, user, start, end)
     prev_month = _txns_between(db, user, prev_start, prev_end)
-    all_rows = db.query(models.Transaction).filter(models.Transaction.user_id == user.id).all()
+
+    # Everything below used to sum a list of every transaction the user had. The
+    # database does that now; only the forty most recent rows are fetched whole.
+    month_key, kind_key = _snapshot_month_expr(db), _snapshot_kind_expr()
+    all_income, all_expense, all_count = (
+        db.query(
+            func.sum(case((models.Transaction.kind == "income", models.Transaction.amount), else_=0.0)),
+            func.sum(case((models.Transaction.kind == "expense", models.Transaction.amount), else_=0.0)),
+            func.count(models.Transaction.id),
+        )
+        .filter(models.Transaction.user_id == user.id)
+        .one()
+    )
+    all_income = float(all_income or 0)
+    all_expense = float(all_expense or 0)
+    all_count = int(all_count or 0)
 
     # Twelve months of totals, so "what about June?" is answerable even when the
     # month in focus is not the one being asked about.
     trend: dict[str, dict] = {}
-    for row in all_rows:
-        key = row.txn_date.strftime("%Y-%m")
+    for key, bucket_name, total in (
+        db.query(month_key, kind_key, func.sum(models.Transaction.amount))
+        .filter(models.Transaction.user_id == user.id)
+        .group_by(month_key, kind_key)
+        .all()
+    ):
+        if not key:
+            continue
         bucket = trend.setdefault(key, {"income": 0.0, "expense": 0.0})
-        bucket["income" if row.kind == "income" else "expense"] += row.amount
+        bucket["income" if bucket_name == "income" else "expense"] += float(total or 0)
     monthly_trend = [
         {"month": key, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
          "savings": round(v["income"] - v["expense"], 2)}
@@ -90,12 +130,16 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
     # eats?" is a comparison across months, so a single month's breakdown can
     # never answer it — and a model asked anyway will invent figures.
     cat_month: dict[str, dict[str, float]] = {}
-    for row in all_rows:
-        if row.kind != "expense":
+    for category, key, total in (
+        db.query(models.Transaction.category, month_key, func.sum(models.Transaction.amount))
+        .filter(models.Transaction.user_id == user.id, models.Transaction.kind == "expense")
+        .group_by(models.Transaction.category, month_key)
+        .order_by(models.Transaction.category, month_key)
+        .all()
+    ):
+        if not key:
             continue
-        key = row.txn_date.strftime("%Y-%m")
-        month_bucket = cat_month.setdefault(row.category, {})
-        month_bucket[key] = month_bucket.get(key, 0.0) + row.amount
+        cat_month.setdefault(category, {})[key] = float(total or 0)
 
     # Every category is listed here (not just the biggest): capping this table
     # hides the one the user asks about, and the model then reports "no records"
@@ -141,7 +185,21 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
         text = re.sub(r"\s+", " ", str(text or "")).strip()
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
-    recent = sorted(all_rows, key=lambda t: (t.txn_date, t.id), reverse=True)[:40]
+    recent = (
+        db.query(models.Transaction)
+        .filter(models.Transaction.user_id == user.id)
+        .order_by(models.Transaction.txn_date.desc(), models.Transaction.id.desc())
+        .limit(40)
+        .all()
+    )
+    expense_categories = {
+        row[0] for row in (
+            db.query(models.Transaction.category)
+            .filter(models.Transaction.user_id == user.id, models.Transaction.kind == "expense")
+            .distinct()
+            .all()
+        )
+    }
 
     return {
         "today": today.isoformat(),
@@ -158,8 +216,8 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
         "totals": {
             "this_month": _totals(this_month),
             "previous_month": _totals(prev_month),
-            "all_time": _totals(all_rows),
-            "transaction_count": len(all_rows),
+            "all_time": _totals_from_sums(all_income, all_expense),
+            "transaction_count": all_count,
         },
         "net_worth": {
             "investments_value": round(sum(i.current_value for i in investments), 2),
@@ -177,7 +235,7 @@ def build_snapshot(db: Session, user, month: str | None = None, today: date | No
             # "pick another row" instead of "zero".
             + [
                 {"category": cat, "spent": 0.0}
-                for cat in sorted({t.category for t in all_rows if t.kind == "expense"} - set(spent))
+                for cat in sorted(expense_categories - set(spent))
             ]
         ),
         "budgets": [
