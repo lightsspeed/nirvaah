@@ -175,10 +175,10 @@ services:
       - ALL
     mem_limit: 256m
     pids_limit: 100
-    # Unhealthy when no successful run has landed in twice the interval, so
-    # `docker compose ps` is enough to notice a dead backup agent.
+    # Unhealthy when the newest run failed or when no run has landed in twice
+    # the interval, so `docker compose ps` is enough to notice a dead agent.
     healthcheck:
-      test: ['CMD-SHELL', '/backup/backup.sh --status | grep -qE "ok|unchanged" || exit 1']
+      test: ['CMD-SHELL', '/backup/backup.sh --health']
       interval: 30m
       timeout: 10s
       retries: 2

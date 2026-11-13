@@ -250,31 +250,47 @@ terraform output env_block      # paste into ../.env
 A `backup` service runs beside the database. Every `BACKUP_INTERVAL_HOURS`
 (4 by default) it:
 
-1. `pg_dump --format=custom` the whole database,
-2. restores that archive into a scratch database and compares row counts with
-   the live one — a backup that cannot be restored is discarded, not uploaded,
-3. fingerprints the **rows** (one md5 per table, over a fixed order) and skips
-   the upload when nothing changed. Hashing the dump file itself does not work:
-   pg_dump embeds a timestamp and a random token, so the bytes differ every run,
-4. uploads to `s3://$S3_BUCKET/$S3_PREFIX/` if configured, always keeping one
-   local copy in the `backups` volume,
+1. `pg_dump --format=custom` the whole database and record a SHA-256 sidecar,
+2. restores that archive into a scratch database and compares **every** public
+   table — row count and a per-table md5 fingerprint — with the live database. A
+   backup that cannot be restored is discarded, not uploaded,
+3. fingerprints the **rows** and skips the upload when nothing changed. Hashing
+   the dump file itself does not work: pg_dump embeds a timestamp and a random
+   token, so the bytes differ every run,
+4. uploads to `s3://$S3_BUCKET/$S3_PREFIX/` with the digest in object metadata,
+   then verifies the upload with `head-object` (size, checksum metadata) **and**
+   downloads the object again to hash it. Only then is the run marked verified,
+   and only then does retention run, always keeping one local copy in the
+   `backups` volume plus the newest verified remote object,
 5. prunes archives older than `BACKUP_RETENTION_DAYS`, keeping the 1st of every
-   month for `BACKUP_RETENTION_MONTHS`.
+   month for `BACKUP_RETENTION_MONTHS`. A failed run prunes nothing, and the last
+   known good backup is never a candidate.
+
+`state/status.json` tracks the latest run (`status`, `last_run`, `last_run_ok`)
+and `last_success` separately, so a dead credential turns the healthcheck
+unhealthy while the last good copy stays identifiable. Full detail — checks,
+lock semantics, IAM scope and the test matrix — is in
+[`docs/engineering/BACKUP_AND_DR.md`](docs/engineering/BACKUP_AND_DR.md).
 
 ```bash
 # run one backup by hand (the arg goes to the entrypoint, not the script path)
 docker compose run --rm backup --once
 docker compose run --rm backup --status
+docker compose run --rm backup --health
+docker compose run --rm backup --verify-remote
 
 # restore drill: never restore into `finance` first
 docker compose run --rm --entrypoint /backup/restore.sh backup --list
 docker compose run --rm --entrypoint /backup/restore.sh backup --file latest.dump
-docker compose run --rm --entrypoint /backup/restore.sh backup --file latest.dump --into finance --force
+docker compose run --rm --entrypoint /backup/restore.sh backup --file latest.dump --into-live
 ```
 
-The restore drill prints row counts per table; swap the databases by renaming
-only after they look right. Cloudflare R2, Backblaze B2 and MinIO all work via
-`S3_ENDPOINT`; R2 is usually the cheapest for this because egress is free.
+The restore drill verifies the archive's checksum before it runs `pg_restore` and
+prints row counts per table; swap the databases by renaming only after they look
+right. `--force` only overrides a checksum refusal — it never lets a restore
+overwrite the live database without `--into-live`. Cloudflare R2, Backblaze B2
+and MinIO all work via `S3_ENDPOINT`; R2 is usually the cheapest for this because
+egress is free.
 
 ### Disaster recovery — what is actually covered
 

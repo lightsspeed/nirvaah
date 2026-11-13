@@ -1,0 +1,4 @@
+# Shell scripts run inside alpine/busybox, which treats CR as part of a token:
+# a CRLF script fails with "syntax error". Keep these LF in the repo and the
+# working tree whatever the platform autocrlf setting is.
+*.sh text eol=lf
