@@ -712,3 +712,146 @@ def test_an_explicit_merchant_question_still_uses_merchants(db, merchant_thread,
     assert analysis["facts"]["scope"] == "Electricity"
     assert analysis["facts"]["month"] == "2026-05"
     assert calls == ["Electricity"]
+
+
+# ── H. category-vs-category comparison (Task 27.4) ────────────────────────
+
+@pytest.fixture()
+def comparison_thread(db):
+    """A fresh ledger: May and June, two categories each."""
+    user = models.User(name="CompareThread", email="compare-thread@local.dev", password_hash="x")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    rows = [
+        ("Groceries", "BigBasket", 900, date(2026, 5, 3)),
+        ("Groceries", "More Supermarket", 600, date(2026, 5, 9)),
+        ("Dining Out", "Truffles", 800, date(2026, 5, 12)),
+        ("Fuel", "HP Petrol", 500, date(2026, 5, 5)),
+        ("Groceries", "BigBasket", 700, date(2026, 6, 2)),
+        ("Dining Out", "Truffles", 400, date(2026, 6, 7)),
+    ]
+    for category, description, amount, when in rows:
+        db.add(models.Transaction(user_id=user.id, kind="expense", amount=Decimal(str(amount)),
+                                  category=category, description=description,
+                                  payment_method="UPI", txn_date=when))
+    db.commit()
+    return user
+
+
+def comparison_spy(monkeypatch):
+    from app.agent import analytics
+
+    calls: list = []
+    real = analytics.compare_categories
+
+    def spy(*args, **kwargs):
+        calls.append((args[2] if len(args) > 2 else kwargs.get("first"),
+                      args[3] if len(args) > 3 else kwargs.get("second"),
+                      kwargs.get("month")))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(analytics, "compare_categories", spy)
+    return calls
+
+
+def test_an_explicit_comparison_returns_both_totals(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread,
+                               "Compare Groceries vs Dining Out in May.", today=TODAY)
+
+    assert analysis["intent"] == "compare_categories"
+    facts = analysis["facts"]
+    assert facts["month"] == "2026-05"
+    assert [(c["category"], c["total"]) for c in facts["categories"]] == [
+        ("Groceries", 1500.0), ("Dining Out", 800.0),
+    ]
+    assert facts["difference"] == 700.0
+    assert facts["higher"] == "Groceries"
+
+
+def test_a_which_is_higher_question_is_a_comparison(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread,
+                               "Which is higher, Fuel or Groceries in May?", today=TODAY)
+
+    assert analysis["intent"] == "compare_categories"
+    assert {c["category"] for c in analysis["facts"]["categories"]} == {"Fuel", "Groceries"}
+
+
+def test_an_unknown_side_asks_and_never_queries(db, comparison_thread, monkeypatch):
+    calls = comparison_spy(monkeypatch)
+
+    analysis = planner.analyse(db, comparison_thread,
+                               "Compare Groceries vs Yachts in May.", today=TODAY)
+
+    assert analysis["intent"] == "unknown_category"
+    assert analysis["facts"]["status"] == "unknown_category"
+    assert analysis["facts"]["category"] == "Yachts"
+    assert analysis["facts"]["month"] == "2026-05"
+    assert calls == [], "an unknown side must not run the comparison query"
+
+
+def test_ordinary_category_questions_stay_aggregates(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread,
+                               "How much did I spend on groceries in May?", today=TODAY)
+
+    assert analysis["intent"] == "category_month"
+
+
+def test_a_month_follow_up_keeps_the_comparison(db, comparison_thread):
+    first = planner.analyse(db, comparison_thread,
+                            "Compare Groceries vs Dining Out in May.", today=TODAY)
+    follow = planner.analyse(db, comparison_thread, "What about June?", today=TODAY,
+                             context=first["context"], turn=2)
+
+    assert follow["intent"] == "compare_categories"
+    assert [(c["category"], c["total"]) for c in follow["facts"]["categories"]] == [
+        ("Groceries", 700.0), ("Dining Out", 400.0),
+    ]
+    assert follow["facts"]["month"] == "2026-06"
+
+
+def test_which_one_was_higher_reuses_the_pair(db, comparison_thread):
+    first = planner.analyse(db, comparison_thread,
+                            "Compare Groceries vs Dining Out in May.", today=TODAY)
+    follow = planner.analyse(db, comparison_thread, "Which one was higher?", today=TODAY,
+                             context=first["context"], turn=2)
+
+    assert follow["intent"] == "compare_categories"
+    assert follow["facts"]["higher"] == "Groceries"
+    assert follow["facts"]["month"] == "2026-05"
+
+
+def test_an_ambiguous_comparison_asks_for_the_two_categories(db, comparison_thread, monkeypatch):
+    calls = comparison_spy(monkeypatch)
+
+    analysis = planner.analyse(db, comparison_thread, "Which category had higher spending?",
+                               today=TODAY)
+
+    assert analysis["intent"] == "clarify"
+    assert "two categories" in analysis["facts"]["question"].lower()
+    assert calls == []
+
+
+def test_write_requests_are_not_routed_to_comparison(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread,
+                               "add a task to compare groceries and fuel", today=TODAY)
+
+    assert analysis["intent"] != "compare_categories"
+
+
+def test_a_comparison_remembers_filters_not_totals(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread,
+                               "Compare Groceries vs Dining Out in May.", today=TODAY)
+    stored = analysis["context"]
+
+    assert stored["comparison_target"] == "Dining Out"
+    assert stored["category"] == "Groceries"
+    assert set(stored) == {"intent", "category", "month", "kind", "comparison_target",
+                           "turn", "updated_at"}
+    assert "difference" not in stored and "categories" not in stored
+
+
+def test_a_two_month_comparison_still_uses_the_month_comparator(db, comparison_thread):
+    analysis = planner.analyse(db, comparison_thread, "Compare May and June", today=TODAY)
+
+    assert analysis["intent"] == "compare_months"

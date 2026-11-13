@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
@@ -345,6 +346,74 @@ def compare_months(db: Session, user, month_a: str, month_b: str) -> dict:
         out["income_delta"] = money.number(money.to_money(b["income"]) - money.to_money(a["income"]))
         out["expense_change_pct"] = round((b["expense"] - a["expense"]) / a["expense"] * 100, 1) if a["expense"] else None
     return out
+
+
+def compare_categories(db: Session, user, first: str, second: str, month: str | None = None,
+                       kind: str = "expense") -> dict:
+    """Two categories over one window, aggregated in SQL and compared in Decimal."""
+    start = end = None
+    if month:
+        start, end = month_bounds(month)
+
+    named: list[tuple[str, list[str]]] = []
+    for label, wanted in (("first", first), ("second", second)):
+        matched = match_categories(db, user, wanted)
+        if not matched:
+            return {
+                "status": "unknown_category",
+                "which": label,
+                "category": wanted,
+                "requested_category": wanted,
+                "month": month,
+                "scope": None,
+                "known_categories": categories(db, user),
+                "message": f'You have never used a category called "{wanted}".',
+            }
+        named.append((wanted, matched))
+
+    # An empty window is missing data, not a pair of zeros.
+    if _filtered(db, user, start=start, end=end, kind=kind or None).first() is None:
+        return {"status": "no_data", "month": month, "kind": kind}
+
+    key = func.lower(models.Transaction.category)
+    wanted_names = [name for _, matched in named for name in matched]
+    rows = (
+        _filtered(db, user, start=start, end=end, kind=kind or None, categories=wanted_names)
+        .with_entities(key, func.sum(models.Transaction.amount), func.count(models.Transaction.id))
+        .group_by(key)
+        .all()
+    )
+    found = {name.lower(): (money.to_money(total, default=money.ZERO), int(count or 0))
+             for name, total, count in rows}
+
+    sides: list[dict] = []
+    amounts: list[Decimal] = []
+    for _wanted, matched in named:
+        entries = [found[m.lower()] for m in matched if m.lower() in found]
+        amount = money.total(entry[0] for entry in entries) if entries else money.ZERO
+        amounts.append(amount)
+        sides.append({
+            "category": matched[0] if len(matched) == 1 else ", ".join(matched),
+            "total": money.number(amount),
+            "count": sum(entry[1] for entry in entries),
+        })
+
+    difference = abs(amounts[0] - amounts[1])
+    higher = None
+    if amounts[0] > amounts[1]:
+        higher = sides[0]["category"]
+    elif amounts[1] > amounts[0]:
+        higher = sides[1]["category"]
+
+    return {
+        "status": "ok",
+        "month": month,
+        "kind": kind,
+        "categories": sides,
+        "difference": money.number(difference),
+        "higher": higher,
+        "equal": amounts[0] == amounts[1],
+    }
 
 
 def available_range(db: Session, user) -> dict:

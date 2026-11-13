@@ -369,6 +369,8 @@ Rules:
 24. Matching: act only on a record whose name matches what the user said. If several records match, ask which one and return no actions. If none match, say you could not find it — never pick the closest row.
 25. When FACTS contains a "transactions" list, the user asked for the records themselves: list them, one per line, as "<date> — <description or category> — ₹<amount>". "total" is the database total for the whole filter — never add the rows up. If "truncated" is true, say the list shows "shown" of "count" records; if it is false, the list is complete.
 26. THREAD CONTEXT names the category and month carried from earlier turns. It is what the user is still asking about — but it is filters, not figures: every number comes from FACTS for the current turn, and an earlier total is never reused.
+28. Comparison FACTS list two categories with their totals, the absolute "difference", and "higher" (null when they are equal). Name both categories and the period, quote both totals and the difference exactly, and say which is higher or that they are equal. Never work out a difference or a winner yourself.
+
 27. Merchant FACTS carry "scope": either the category the query was filtered to, or "all categories". Lead with that scope. An all-category merchant lists its own "categories" — never call the whole total one category, and never present all-category merchants as belonging to the carried category.
 
 Return ONE JSON object and nothing else:

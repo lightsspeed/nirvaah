@@ -291,6 +291,142 @@ def test_merchants_category_stays_inside_the_user(db, merchant_ledger):
     assert "NotMine" not in {m["merchant"] for m in facts["merchants"]}
 
 
+@pytest.fixture()
+def comparison_ledger(db):
+    """May: Groceries 1500, Dining Out 800, Fuel 500, Entertainment 1500 (equal)."""
+    user = models.User(name="Compare", email="compare@local.dev", password_hash="x")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    rows = [
+        ("expense", 900.00, "Groceries", "BigBasket", "UPI", date(2026, 5, 3)),
+        ("expense", 600.00, "Groceries", "More Supermarket", "UPI", date(2026, 5, 9)),
+        ("expense", 800.00, "Dining Out", "Truffles", "SBI", date(2026, 5, 12)),
+        ("expense", 500.00, "Fuel", "HP Petrol", "SBI", date(2026, 5, 5)),
+        ("expense", 1500.00, "Entertainment", "PVR", "SBI", date(2026, 5, 18)),
+        ("expense", 300.00, "Groceries", "BigBasket", "UPI", date(2026, 6, 2)),
+        ("expense", 200.00, "Electricity", "BESCOM", "SBI", date(2026, 6, 5)),
+        ("income", 5000.00, "Salary", "Employer", "SBI", date(2026, 5, 1)),
+    ]
+    for kind, amount, category, description, method, when in rows:
+        db.add(models.Transaction(user_id=user.id, kind=kind, amount=amount, category=category,
+                                  description=description, payment_method=method, txn_date=when))
+    db.commit()
+    return user
+
+
+def test_compare_categories_reports_both_totals_and_the_higher_one(db, comparison_ledger):
+    facts = analytics.compare_categories(db, comparison_ledger, "Groceries", "Dining Out",
+                                         month="2026-05")
+
+    assert facts["status"] == "ok"
+    assert facts["month"] == "2026-05"
+    assert facts["kind"] == "expense"
+    assert [(c["category"], c["total"], c["count"]) for c in facts["categories"]] == [
+        ("Groceries", 1500.0, 2),
+        ("Dining Out", 800.0, 1),
+    ]
+    assert facts["difference"] == 700.0
+    assert facts["higher"] == "Groceries"
+    assert facts["equal"] is False
+
+
+def test_compare_categories_handles_equal_totals(db, comparison_ledger):
+    facts = analytics.compare_categories(db, comparison_ledger, "Groceries", "Entertainment",
+                                         month="2026-05")
+
+    assert facts["difference"] == 0.0
+    assert facts["higher"] is None
+    assert facts["equal"] is True
+
+
+def test_compare_categories_treats_a_quiet_category_as_zero(db, comparison_ledger):
+    facts = analytics.compare_categories(db, comparison_ledger, "Groceries", "Electricity",
+                                         month="2026-05")
+
+    assert facts["status"] == "ok"
+    assert facts["categories"][1] == {"category": "Electricity", "total": 0.0, "count": 0}
+    assert facts["difference"] == 1500.0
+    assert facts["higher"] == "Groceries"
+
+
+@pytest.mark.parametrize("first,second,which", [
+    ("Yachts", "Groceries", "first"),
+    ("Groceries", "Yachts", "second"),
+])
+def test_compare_categories_names_the_unknown_side(db, comparison_ledger, first, second, which):
+    facts = analytics.compare_categories(db, comparison_ledger, first, second, month="2026-05")
+
+    assert facts["status"] == "unknown_category"
+    assert facts["which"] == which
+    assert facts["category"] == "Yachts"
+    assert facts["scope"] is None
+    assert "Groceries" in facts["known_categories"]
+    assert "categories" not in facts
+
+
+def test_compare_categories_respects_the_month(db, comparison_ledger):
+    may = analytics.compare_categories(db, comparison_ledger, "Groceries", "Dining Out", month="2026-05")
+    june = analytics.compare_categories(db, comparison_ledger, "Groceries", "Dining Out", month="2026-06")
+
+    assert [c["total"] for c in may["categories"]] == [1500.0, 800.0]
+    assert [c["total"] for c in june["categories"]] == [300.0, 0.0]
+    assert june["higher"] == "Groceries"
+
+
+def test_compare_categories_empty_month_is_missing_data(db, comparison_ledger):
+    facts = analytics.compare_categories(db, comparison_ledger, "Groceries", "Dining Out",
+                                         month="2019-01")
+
+    assert facts == {"status": "no_data", "month": "2019-01", "kind": "expense"}
+
+
+def test_compare_categories_respects_the_kind(db, comparison_ledger):
+    income = analytics.compare_categories(db, comparison_ledger, "Salary", "Groceries",
+                                          month="2026-05", kind="income")
+    expense = analytics.compare_categories(db, comparison_ledger, "Salary", "Groceries",
+                                           month="2026-05")
+
+    assert [c["total"] for c in income["categories"]] == [5000.0, 0.0]
+    assert [c["total"] for c in expense["categories"]] == [0.0, 1500.0]
+
+
+def test_compare_categories_stays_inside_the_user(db, comparison_ledger):
+    other = models.User(name="Other", email="other-compare@local.dev", password_hash="x")
+    db.add(other)
+    db.commit()
+    db.refresh(other)
+    db.add(models.Transaction(user_id=other.id, kind="expense", amount=99999.00,
+                              category="Groceries", description="NotMine", payment_method="UPI",
+                              txn_date=date(2026, 5, 15)))
+    db.commit()
+
+    facts = analytics.compare_categories(db, comparison_ledger, "Groceries", "Dining Out",
+                                         month="2026-05")
+
+    assert facts["categories"][0]["total"] == 1500.0
+
+
+def test_compare_categories_uses_exact_decimal_arithmetic(db, comparison_ledger):
+    # 0.10 + 0.20 is the classic float trap; Decimal keeps it at 0.30.
+    db.add(models.Transaction(user_id=comparison_ledger.id, kind="expense", amount=0.10,
+                              category="Misc", description="a", payment_method="UPI",
+                              txn_date=date(2026, 5, 20)))
+    db.add(models.Transaction(user_id=comparison_ledger.id, kind="expense", amount=0.20,
+                              category="Misc", description="b", payment_method="UPI",
+                              txn_date=date(2026, 5, 21)))
+    db.add(models.Transaction(user_id=comparison_ledger.id, kind="expense", amount=0.10,
+                              category="Hobbies", description="c", payment_method="UPI",
+                              txn_date=date(2026, 5, 22)))
+    db.commit()
+
+    facts = analytics.compare_categories(db, comparison_ledger, "Misc", "Hobbies", month="2026-05")
+
+    assert facts["categories"][0]["total"] == 0.3
+    assert facts["difference"] == 0.2
+    assert facts["higher"] == "Misc"
+
+
 def test_merchants_and_frequency(db, ledger):
     facts = analytics.merchants(db, ledger)
     assert facts["merchants"] == [

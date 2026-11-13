@@ -117,6 +117,37 @@ def _requested_category_phrase(message: str) -> str | None:
     return phrase
 
 
+def _clean_term(term: str) -> str:
+    """Strip the period and the question words off one side of a comparison."""
+    term = term.strip(" .,?!'\"")
+    month = _MONTH_RE.search(term)
+    if month:
+        term = term[: month.start()]
+    term = _TERM_STOP.sub("", term)
+    term = _PHRASE_PREFIX.sub("", term)
+    return term.strip(" .,?!'\"")
+
+
+def _split_comparison(message: str) -> tuple[str, str] | None:
+    """The two category names in "compare X vs Y", when both look like names."""
+    text = _COMPARE_LEAD.sub("", message or "", count=1).strip()
+    parts = _COMPARE_SEP.split(text, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    left, right = _clean_term(parts[0]), _clean_term(parts[1])
+    for term in (left, right):
+        if not term or len(term) > 40 or re.search(r"\d", term) or len(term.split()) > 3:
+            return None
+        if resolve_month(term) is not None:      # "compare May and June" is months
+            return None
+    return left, right
+
+
+def _month_names(text: str) -> list[str]:
+    found = re.findall(r"\b(" + "|".join(MONTH_NAMES) + r")\b", text, re.I)
+    return [name.lower() for name in found]
+
+
 def _singular(token: str) -> str:
     """A crude, predictable singular: groceries -> grocery, bills -> bill."""
     if token.endswith("ies") and len(token) > 4:
@@ -168,6 +199,22 @@ CONTEXT_TTL_TURNS = 6
 _WRITE_CUE = re.compile(
     r"\b(add|create|update|change|move|reschedule|delete|remove|complete|mark|set|rename|"
     r"remember|make|assign|log)\b", re.I)
+
+# "compare Groceries vs Dining Out", "which is higher, Fuel or Electricity?"
+_COMPARE_CUE = re.compile(
+    r"\b(?:compare|compares|compared|comparing|comparison|versus|vs|higher|lower|bigger|larger|"
+    r"smaller)\b", re.I)
+_COMPARE_LEAD = re.compile(
+    r"^\s*(?:please\s+)?(?:compare|comparing|comparison of)\s+"
+    r"|^\s*(?:which|what)\s+(?:is|was|had|has)\s+(?:the\s+)?(?:higher|lower|bigger|larger|smaller)"
+    r"\s*,?\s*", re.I)
+_COMPARE_SEP = re.compile(r"\s+(?:vs|versus|against|with|and|or)\s+", re.I)
+_TERM_STOP = re.compile(
+    r"\b(?:in|on|for|during|from|this|last|previous|next|current|expenses?|spending|spends?|"
+    r"totals?|transactions?|payments?|bills?)\b.*$", re.I)
+_PERIOD_COMPARISON = re.compile(
+    r"\b(?:than|versus|vs|compared (?:to|with))\s+(?:the\s+)?(?:last|previous)\s+(?:month|year)\b"
+    r"|\b(?:this|current)\s+month\b.{0,40}\b(?:last|previous)\s+month\b", re.I)
 
 # "what about fuel?", "and April?" — a switch that names one dimension.
 _SWITCH_CUE = re.compile(r"^\s*(?:what|how)\s+about\b|^\s*and\b", re.I)
@@ -422,6 +469,63 @@ def analyse(db: Session, user, message: str, today: date | None = None,
                     facts)
 
     try:
+        # ── category comparison ────────────────────────────────────────────
+        thread_intent = context.get("intent") if isinstance(context, dict) else None
+        ctx_category = context.get("category") if isinstance(context, dict) else None
+        ctx_month = context.get("month") if isinstance(context, dict) else None
+        ctx_pair = context.get("comparison_target") if isinstance(context, dict) else None
+
+        def comparison(left, right, period, trade_kind):
+            # Remember the pair, never the totals: they are re-queried every turn.
+            resolved.update({"category": left, "month": period, "kind": trade_kind,
+                             "comparison_target": right})
+            facts = analytics.compare_categories(db, user, left, right, month=period,
+                                                 kind=trade_kind or "expense")
+            return done("compare_categories",
+                        {"categories": [left, right], "month": period, "kind": trade_kind},
+                        facts)
+
+        wants_compare = bool(_COMPARE_CUE.search(text)) and not _WRITE_CUE.search(text)
+        # "what about June?" keeps the pair; "and my electricity bill?" is an amount
+        # question and must not be turned into a comparison.
+        asks_amount = bool(_SUMMARY_CUES.search(text) or _DIMENSION_Q.search(text)
+                           or _KIND_EXPENSE.search(text))
+        sticky_compare = bool(
+            thread_intent == "compare_categories" and ctx_pair and not _WRITE_CUE.search(text)
+            and (wants_compare or (_SWITCH_CUE.search(message) and not asks_amount))
+        )
+        if wants_compare:
+            terms = _split_comparison(message)
+            if terms:
+                left_match = analytics.match_categories(db, user, terms[0])
+                right_match = analytics.match_categories(db, user, terms[1])
+                if left_match and right_match:
+                    return comparison(left_match[0], right_match[0], month, kind)
+                missing = terms[0] if not left_match else terms[1]
+                return done("unknown_category", {"phrase": missing, "month": month},
+                            {"status": "unknown_category", "category": missing,
+                             "requested_category": missing, "scope": None, "month": month,
+                             "known_categories": pool,
+                             "message": (f'You have no category called "{missing}" — I cannot '
+                                         f'compare it.')})
+            if len(mentioned) >= 2:
+                return comparison(mentioned[0], mentioned[1], month, kind)
+            if sticky_compare:
+                return comparison(category or ctx_category, ctx_pair, month or ctx_month, kind)
+            if len(_month_names(text)) >= 2 and not mentioned:
+                pass          # "compare May and June" — the months comparator below owns it
+            elif _PERIOD_COMPARISON.search(text):
+                return done("clarify", {"month": month},
+                            {"status": "ambiguous", "month": month,
+                             "question": ("I can compare two categories in one period, or two "
+                                          "months overall — which would you like?")})
+            else:
+                return done("clarify", {"month": month},
+                            {"status": "ambiguous", "month": month,
+                             "question": "Which two categories would you like to compare?"})
+        elif sticky_compare:
+            return comparison(category or ctx_category, ctx_pair, month or ctx_month, kind)
+
         # "which merchant contributed most?" is a question about merchants, even
         # when the category and month were inherited — answer the question asked.
         # A correction or a switch on a merchant thread stays a merchant question.
