@@ -112,11 +112,13 @@ def _budget_fields(action: dict, *, creating: bool, context: dict | None = None)
     fields: dict = {}
     if creating:
         fields["category"] = text(action, "category") or "Other"
-        fields["monthly_limit"] = to_money(num(action, "monthly_limit"))
+        fields["monthly_limit"] = require_money(num(action, "monthly_limit"),
+                                                field="monthly_limit", positive=True)
         fields["month"] = month(action, today=_business_today(context))
         return fields
     if "monthly_limit" in action:
-        fields["monthly_limit"] = to_money(num(action, "monthly_limit"))
+        fields["monthly_limit"] = require_money(num(action, "monthly_limit"),
+                                                field="monthly_limit", positive=True)
     if "category" in action:
         fields["category"] = text(action, "category")
     if "month" in action:
@@ -128,15 +130,17 @@ def _goal_fields(action: dict, *, creating: bool, context: dict | None = None) -
     fields: dict = {}
     if creating:
         fields["name"] = text(action, "name") or "Goal"
-        fields["target_amount"] = to_money(num(action, "target_amount"))
-        fields["saved_amount"] = to_money(num(action, "saved_amount", 0))
+        fields["target_amount"] = require_money(num(action, "target_amount"),
+                                                field="target_amount", positive=True)
+        fields["saved_amount"] = require_money(num(action, "saved_amount", 0),
+                                               field="saved_amount")
         fields["target_date"] = date_value(action, "target_date", None)
         return fields
     if "name" in action:
         fields["name"] = text(action, "name")
-    for key in ("target_amount", "saved_amount"):
+    for key, positive in (("target_amount", True), ("saved_amount", False)):
         if key in action:
-            fields[key] = to_money(num(action, key))
+            fields[key] = require_money(num(action, key), field=key, positive=positive)
     if "target_date" in action:
         fields["target_date"] = date_value(action, "target_date", None)
     return fields
@@ -145,11 +149,12 @@ def _goal_fields(action: dict, *, creating: bool, context: dict | None = None) -
 def _investment_fields(action: dict, *, creating: bool, context: dict | None = None) -> dict:
     fields: dict = {}
     if creating:
-        invested = to_money(num(action, "invested_amount", 0))
+        invested = require_money(num(action, "invested_amount", 0), field="invested_amount")
         fields["name"] = text(action, "name") or "Investment"
         fields["asset_type"] = text(action, "asset_type", "Mutual Fund") or "Mutual Fund"
         fields["invested_amount"] = invested
-        fields["current_value"] = to_money(num(action, "current_value", invested))
+        fields["current_value"] = require_money(num(action, "current_value", invested),
+                                                field="current_value")
         fields["notes"] = text(action, "notes")
         return fields
     for key in ("name", "asset_type", "notes"):
@@ -157,7 +162,7 @@ def _investment_fields(action: dict, *, creating: bool, context: dict | None = N
             fields[key] = text(action, key)
     for key in ("invested_amount", "current_value"):
         if key in action:
-            fields[key] = to_money(num(action, key))
+            fields[key] = require_money(num(action, key), field=key)
     return fields
 
 
@@ -166,8 +171,9 @@ def _liability_fields(action: dict, *, creating: bool, context: dict | None = No
     if creating:
         fields["name"] = text(action, "name") or "Liability"
         fields["liability_type"] = text(action, "liability_type", "Loan") or "Loan"
-        fields["outstanding_amount"] = to_money(num(action, "outstanding_amount", 0))
-        fields["monthly_emi"] = to_money(num(action, "monthly_emi", 0))
+        fields["outstanding_amount"] = require_money(num(action, "outstanding_amount", 0),
+                                                     field="outstanding_amount")
+        fields["monthly_emi"] = require_money(num(action, "monthly_emi", 0), field="monthly_emi")
         fields["notes"] = text(action, "notes")
         return fields
     for key in ("name", "liability_type", "notes"):
@@ -175,7 +181,7 @@ def _liability_fields(action: dict, *, creating: bool, context: dict | None = No
             fields[key] = text(action, key)
     for key in ("outstanding_amount", "monthly_emi"):
         if key in action:
-            fields[key] = to_money(num(action, key))
+            fields[key] = require_money(num(action, key), field=key)
     return fields
 
 

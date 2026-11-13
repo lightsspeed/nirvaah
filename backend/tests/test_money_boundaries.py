@@ -336,3 +336,180 @@ def test_as_plain_keeps_integers_whole():
     assert as_plain("x") == "x"
     assert as_plain(Decimal("2.675")) == 2.68
     assert isinstance(as_plain(Decimal("2.675")), float)
+
+
+# ── the four other financial writers follow their own rules ─────────────
+
+
+NEGATIVE_CASES = [
+    ("budget limit", {"op": "add_budget", "category": "X", "monthly_limit": -5, "month": "2026-11"},
+     "Budget", "monthly_limit must be more than zero"),
+    ("goal target", {"op": "add_goal", "name": "G", "target_amount": -100, "saved_amount": 0},
+     "Goal", "target_amount must be more than zero"),
+    ("goal saved", {"op": "add_goal", "name": "G", "target_amount": 100, "saved_amount": -10},
+     "Goal", "saved_amount must not be negative"),
+    ("investment invested", {"op": "add_investment", "name": "I", "asset_type": "mf",
+                             "invested_amount": -5, "current_value": 0},
+     "Investment", "invested_amount must not be negative"),
+    ("investment current", {"op": "add_investment", "name": "I", "asset_type": "mf",
+                            "invested_amount": 1000, "current_value": -6},
+     "Investment", "current_value must not be negative"),
+    ("liability outstanding", {"op": "add_liability", "name": "L", "liability_type": "loan",
+                               "outstanding_amount": -5, "monthly_emi": 0},
+     "Liability", "outstanding_amount must not be negative"),
+    ("liability emi", {"op": "add_liability", "name": "L", "liability_type": "loan",
+                       "outstanding_amount": 100, "monthly_emi": -6},
+     "Liability", "monthly_emi must not be negative"),
+]
+
+
+@pytest.mark.parametrize("label,action,model_name,message", NEGATIVE_CASES,
+                         ids=[case[0] for case in NEGATIVE_CASES])
+def test_assistant_rejects_negative_amounts(db, user, label, action, model_name, message):
+    model = getattr(models, model_name)
+    before = db.query(model).count()
+
+    result = execution.execute(db, user, action)
+
+    assert result["success"] is False, f"{label}: {result}"
+    assert result["error"] == message
+    assert db.query(model).count() == before, f"{label} created a row anyway"
+
+
+ZERO_CASES = [
+    ("budget limit", {"op": "add_budget", "category": "X", "monthly_limit": 0, "month": "2026-11"},
+     "Budget", False),
+    ("goal target", {"op": "add_goal", "name": "G", "target_amount": 0, "saved_amount": 0},
+     "Goal", False),
+    ("goal saved", {"op": "add_goal", "name": "G", "target_amount": 100, "saved_amount": 0},
+     "Goal", True),
+    ("investment", {"op": "add_investment", "name": "I", "asset_type": "mf",
+                    "invested_amount": 0, "current_value": 0}, "Investment", True),
+    ("liability", {"op": "add_liability", "name": "L", "liability_type": "loan",
+                   "outstanding_amount": 0, "monthly_emi": 0}, "Liability", True),
+]
+
+
+@pytest.mark.parametrize("label,action,model_name,accepted", ZERO_CASES,
+                         ids=[case[0] for case in ZERO_CASES])
+def test_zero_follows_each_field_rule(db, user, label, action, model_name, accepted):
+    model = getattr(models, model_name)
+    before = db.query(model).count()
+
+    result = execution.execute(db, user, action)
+
+    assert result["success"] is accepted, f"{label}: {result}"
+    assert db.query(model).count() - before == (1 if accepted else 0)
+    if not accepted:
+        assert "more than zero" in (result["error"] or "")
+
+
+ROUNDS_TO_ZERO_CASES = [
+    ("budget limit", {"op": "add_budget", "category": "X", "monthly_limit": 0.004,
+                      "month": "2026-11"}, "Budget", False, "monthly_limit"),
+    ("goal target", {"op": "add_goal", "name": "G", "target_amount": 0.004, "saved_amount": 0},
+     "Goal", False, "target_amount"),
+    ("goal saved", {"op": "add_goal", "name": "G", "target_amount": 100, "saved_amount": 0.004},
+     "Goal", True, "saved_amount"),
+    ("investment invested", {"op": "add_investment", "name": "I", "asset_type": "mf",
+                             "invested_amount": 0.004, "current_value": 0},
+     "Investment", True, "invested_amount"),
+    ("liability outstanding", {"op": "add_liability", "name": "L", "liability_type": "loan",
+                               "outstanding_amount": 0.004, "monthly_emi": 0},
+     "Liability", True, "outstanding_amount"),
+]
+
+
+@pytest.mark.parametrize("label,action,model_name,accepted,field", ROUNDS_TO_ZERO_CASES,
+                         ids=[case[0] for case in ROUNDS_TO_ZERO_CASES])
+def test_a_value_that_rounds_to_zero_follows_the_same_rule(db, user, label, action, model_name,
+                                                           accepted, field):
+    model = getattr(models, model_name)
+    before = db.query(model).count()
+
+    result = execution.execute(db, user, action)
+
+    assert result["success"] is accepted, f"{label}: {result}"
+    if accepted:
+        stored = getattr(db.query(model).order_by(model.id.desc()).first(), field)
+        assert stored == Decimal("0.00")
+    else:
+        assert db.query(model).count() == before
+
+
+def test_optional_amounts_default_as_before(db, user):
+    goal = execution.execute(db, user, {"op": "add_goal", "name": "G", "target_amount": 100})
+    investment = execution.execute(db, user, {
+        "op": "add_investment", "name": "I", "asset_type": "mf", "invested_amount": 1000})
+    liability = execution.execute(db, user, {
+        "op": "add_liability", "name": "L", "liability_type": "loan", "outstanding_amount": 100})
+
+    assert goal["success"] is True and investment["success"] is True and liability["success"] is True
+    assert db.query(models.Goal).filter_by(name="G").one().saved_amount == Decimal("0.00")
+    assert db.query(models.Investment).filter_by(name="I").one().current_value == Decimal("1000.00")
+    assert db.query(models.Liability).filter_by(name="L").one().monthly_emi == Decimal("0.00")
+
+
+def test_a_required_amount_cannot_be_omitted(db, user):
+    before = db.query(models.Budget).count()
+
+    result = execution.execute(db, user, {"op": "add_budget", "category": "X", "month": "2026-11"})
+
+    assert result["success"] is False
+    assert "monthly_limit is required" in (result["error"] or "")
+    assert db.query(models.Budget).count() == before
+
+
+def test_valid_positive_amounts_still_verify(db, user):
+    budget = execution.execute(db, user, {"op": "add_budget", "category": "X",
+                                          "monthly_limit": 500.005, "month": "2026-11"})
+    goal = execution.execute(db, user, {"op": "add_goal", "name": "G", "target_amount": 80000.555,
+                                        "saved_amount": 0.005})
+    investment = execution.execute(db, user, {"op": "add_investment", "name": "I", "asset_type": "mf",
+                                              "invested_amount": 1000.004, "current_value": 1200.005})
+    liability = execution.execute(db, user, {"op": "add_liability", "name": "L", "liability_type": "loan",
+                                             "outstanding_amount": 250000.005, "monthly_emi": 3000.999})
+
+    for result in (budget, goal, investment, liability):
+        assert result["success"] is True, result
+        assert result["verified"] is True, result
+    assert db.query(models.Budget).filter_by(category="X").one().monthly_limit == Decimal("500.01")
+    row = db.query(models.Goal).filter_by(name="G").one()
+    assert (row.target_amount, row.saved_amount) == (Decimal("80000.56"), Decimal("0.01"))
+    row = db.query(models.Investment).filter_by(name="I").one()
+    assert (row.invested_amount, row.current_value) == (Decimal("1000.00"), Decimal("1200.01"))
+    row = db.query(models.Liability).filter_by(name="L").one()
+    assert (row.outstanding_amount, row.monthly_emi) == (Decimal("250000.01"), Decimal("3001.00"))
+
+
+INVALID_UPDATE_CASES = [
+    ("budget limit", {"op": "add_budget", "category": "B", "monthly_limit": 100, "month": "2026-11"},
+     "update_budget", {"monthly_limit": -1}, "Budget", "monthly_limit", Decimal("100.00")),
+    ("goal target", {"op": "add_goal", "name": "G", "target_amount": 100, "saved_amount": 0},
+     "update_goal", {"target_amount": 0}, "Goal", "target_amount", Decimal("100.00")),
+    ("goal saved", {"op": "add_goal", "name": "G2", "target_amount": 100, "saved_amount": 10},
+     "update_goal", {"saved_amount": -1}, "Goal", "saved_amount", Decimal("10.00")),
+    ("investment invested", {"op": "add_investment", "name": "I", "asset_type": "mf",
+                             "invested_amount": 1000, "current_value": 1100},
+     "update_investment", {"invested_amount": -1}, "Investment", "invested_amount",
+     Decimal("1000.00")),
+    ("liability emi", {"op": "add_liability", "name": "L", "liability_type": "loan",
+                       "outstanding_amount": 100, "monthly_emi": 5},
+     "update_liability", {"monthly_emi": -1}, "Liability", "monthly_emi", Decimal("5.00")),
+]
+
+
+@pytest.mark.parametrize("label,create,op,change,model_name,field,expected", INVALID_UPDATE_CASES,
+                         ids=[case[0] for case in INVALID_UPDATE_CASES])
+def test_an_invalid_update_leaves_the_record_alone(db, user, label, create, op, change,
+                                                   model_name, field, expected):
+    model = getattr(models, model_name)
+    created = execution.execute(db, user, create)
+    assert created["success"] is True, created
+    row = db.query(model).filter_by(id=created["entity_id"]).one()
+
+    result = execution.execute(db, user, {"op": op, "id": row.id, **change})
+    db.refresh(row)
+
+    assert result["success"] is False, f"{label}: {result}"
+    assert getattr(row, field) == expected, f"{label} changed the stored value"
