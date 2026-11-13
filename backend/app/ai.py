@@ -460,18 +460,24 @@ DELETE_OPS = {f"delete_{name}" for name in ("transaction", "budget", "goal", "in
 
 
 def guard_action(db: Session, user, action: dict, message: str) -> str | None:
-    """Refuse an action whose target does not match the words in the request.
+    """Refuse an action that the user's request does not support.
 
-    This is the second opinion on the model's choice of record, scored the same
-    way as `agent.resolve` so the two cannot disagree. A follow-up with no
-    identifying words of its own ("make it high priority") is allowed through —
-    the conversation's focus record decides what it means.
+    Two checks live here, both deterministic. A creation must be asked for in the
+    message itself (`authority.authorize_creation`) — a model must never turn a
+    question into a write. An update or delete must target a record whose name
+    matches the words in the request, scored the same way as `agent.resolve` so
+    the two cannot disagree. A follow-up with no identifying words of its own
+    ("make it high priority") is allowed through — the conversation's focus
+    record decides what it means.
     """
     from .agent import resolve as _resolve
 
     op = str(action.get("op") or "")
-    if not message or op.startswith("add_"):
+    if not message:
         return None
+    if op.startswith("add_"):
+        from .agent.authority import authorize_creation
+        return authorize_creation(op, message)
     kind = op.split("_", 1)[1] if "_" in op else ""
     if kind not in _resolve.ENTITIES:
         return None
