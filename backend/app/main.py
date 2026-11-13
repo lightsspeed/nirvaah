@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from .database import Base, engine, get_db
 from . import models, schemas
-from .timeutil import utcnow
+from .timeutil import iso_utc, utcnow
 from .tz import user_today
 from .security import hash_password, verify_password, create_access_token, get_current_user
 from .agent.api import router as assistant_router
@@ -489,8 +489,8 @@ def _note_out(n: models.Note):
     return {
         "id": n.id, "title": n.title, "body": n.body, "category": n.category,
         "tags": _from_tags(n.tags), "pinned": n.pinned, "archived": n.archived,
-        "createdAt": n.created_at.isoformat() if n.created_at else None,
-        "updatedAt": n.updated_at.isoformat() if n.updated_at else None,
+        "createdAt": iso_utc(n.created_at),
+        "updatedAt": iso_utc(n.updated_at),
     }
 
 
@@ -498,8 +498,8 @@ def _task_out(t: models.Task):
     return {
         "id": t.id, "text": t.text, "notes": t.notes, "done": t.done,
         "priority": t.priority, "category": t.category, "due": _iso(t.due),
-        "createdAt": t.created_at.isoformat() if t.created_at else None,
-        "updatedAt": t.updated_at.isoformat() if t.updated_at else None,
+        "createdAt": iso_utc(t.created_at),
+        "updatedAt": iso_utc(t.updated_at),
     }
 
 
@@ -508,8 +508,8 @@ def _journal_out(e: models.JournalEntry):
         "id": e.id, "title": e.title, "description": e.description,
         "category": e.category, "mood": e.mood, "amount": e.amount,
         "date": _iso(e.event_date), "tags": _from_tags(e.tags),
-        "createdAt": e.created_at.isoformat() if e.created_at else None,
-        "updatedAt": e.updated_at.isoformat() if e.updated_at else None,
+        "createdAt": iso_utc(e.created_at),
+        "updatedAt": iso_utc(e.updated_at),
     }
 
 

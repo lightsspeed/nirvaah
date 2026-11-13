@@ -9,6 +9,7 @@ import {
     formatDay, shortDay, monthKey, monthLabel, timeAgo, moodMeta,
     EVENTS_KEY, tintOf, categoryPool, useCategories,
 } from './store';
+import { parseDateOnly, yearOf } from '../dates';
 import { PageHero, StatTile, Chip, SearchField, Segmented, EmptyState, Modal, CategoryManager } from './ui';
 
 const MOODS = ['great', 'good', 'steady', 'low', 'hard'];
@@ -187,7 +188,7 @@ export default function JournalPage() {
     const [editing, setEditing] = useState(null);
 
     const years = useMemo(() => {
-        const set = new Set(events.map(e => new Date(e.date).getFullYear()));
+        const set = new Set(events.map(e => yearOf(e.date)).filter(y => y !== null));
         return ['All', ...[...set].sort((a, b) => b - a).map(String)];
     }, [events]);
 
@@ -210,7 +211,7 @@ export default function JournalPage() {
     const visible = useMemo(() => {
         let list = events;
         if (category !== 'All') list = list.filter(e => e.category === category);
-        if (year !== 'All') list = list.filter(e => String(new Date(e.date).getFullYear()) === year);
+        if (year !== 'All') list = list.filter(e => String(yearOf(e.date)) === year);
         if (query.trim()) {
             const q = query.trim().toLowerCase();
             list = list.filter(e =>
@@ -350,7 +351,7 @@ export default function JournalPage() {
                                 </div>
                                 {group.items.map(event => {
                                     const mood = moodMeta(event.mood);
-                                    const day = new Date(event.date);
+                                    const day = parseDateOnly(event.date);
                                     return (
                                         <div
                                             key={event.id}
@@ -361,8 +362,8 @@ export default function JournalPage() {
                                             onKeyDown={e => { if (e.key === 'Enter') setEditing(event); }}
                                         >
                                             <span className="journal-day" style={{ '--chip': tintOf(event.category) }}>
-                                                <b>{day.getDate()}</b>
-                                                <small>{day.toLocaleDateString('en-IN', { month: 'short' })}</small>
+                                                <b>{day ? day.getDate() : '—'}</b>
+                                                <small>{day ? day.toLocaleDateString('en-IN', { month: 'short' }) : ''}</small>
                                             </span>
                                             <div className="task-main">
                                                 <span className="task-text">{event.title}</span>

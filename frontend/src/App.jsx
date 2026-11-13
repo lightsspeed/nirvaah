@@ -18,6 +18,7 @@ import GlobalSearch from './GlobalSearch';
 import BrandAiIcon from './BrandAiIcon';
 import AssistantPage from './AssistantPage';
 import { timezoneHeader } from './deviceTz';
+import { formatDateOnly, formatInstant } from './dates';
 import NotesPage from './life/NotesPage';
 import TasksPage from './life/TasksPage';
 import JournalPage from './life/JournalPage';
@@ -1049,7 +1050,10 @@ export default function App() {
         const q = search.trim().toLowerCase();
         if (!q) return [];
         const has = (...vals) => vals.some(v => String(v ?? '').toLowerCase().includes(q));
-        const when = v => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '');
+        // Two different kinds of value: a timestamp is an instant (rendered in the
+        // browser's zone), a date is a calendar day that must not shift.
+        const when = v => formatDateOnly(v, { day: '2-digit', month: 'short' });
+        const whenStamp = v => formatInstant(v, { day: '2-digit', month: 'short' });
         const pageList = groups.flatMap(([, items]) => items);
 
         return [
@@ -1069,7 +1073,7 @@ export default function App() {
                     id: n.id,
                     title: n.title || 'Untitled note',
                     subtitle: n.category,
-                    meta: when(n.updatedAt || n.createdAt),
+                    meta: whenStamp(n.updatedAt || n.createdAt),
                 })),
             },
             {

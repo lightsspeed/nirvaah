@@ -18,6 +18,7 @@ from ..timeutil import utcnow
 from . import execution, focus as focus_mod, obs
 from ..database import get_db
 from ..security import get_current_user
+from ..timeutil import iso_utc
 from ..tz import user_today
 from . import graph, providers
 
@@ -47,7 +48,7 @@ def _message_out(m: models.ChatMessage) -> dict:
         "steps": meta.get("steps", []),
         "degraded": meta.get("degraded", ""),
         "note": meta.get("note", ""),
-        "at": m.created_at.isoformat() if m.created_at else None,
+        "at": iso_utc(m.created_at),
     }
 
 
@@ -57,8 +58,8 @@ def _conversation_out(c: models.Conversation, count: int = 0) -> dict:
         "title": c.title,
         "provider": c.provider,
         "messages": count,
-        "created_at": c.created_at.isoformat() if c.created_at else None,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        "created_at": iso_utc(c.created_at),
+        "updated_at": iso_utc(c.updated_at),
     }
 
 
@@ -291,7 +292,7 @@ def list_memories(db: Session = Depends(get_db), user=Depends(get_current_user))
         .all()
     )
     return [
-        {"id": r.id, "fact": r.fact, "at": r.created_at.isoformat() if r.created_at else None}
+        {"id": r.id, "fact": r.fact, "at": iso_utc(r.created_at)}
         for r in rows
     ]
 
@@ -305,7 +306,7 @@ def add_memory(data: MemoryIn, db: Session = Depends(get_db), user=Depends(get_c
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {"id": row.id, "fact": row.fact, "at": row.created_at.isoformat() if row.created_at else None}
+    return {"id": row.id, "fact": row.fact, "at": iso_utc(row.created_at)}
 
 
 @router.delete("/memories/{memory_id}")

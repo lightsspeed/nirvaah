@@ -75,3 +75,22 @@ def today_for_timezone(timezone_name: str | None) -> date:
             log.warning("unknown timezone %r; falling back to %s", timezone_name, DEFAULT_TIMEZONE)
         zone = ZoneInfo(DEFAULT_TIMEZONE)
     return _utc_now().astimezone(zone).date()
+
+
+def iso_utc(value: datetime | None) -> str | None:
+    """Serialize a stored timestamp as an explicit UTC instant.
+
+    The database holds naive UTC, so ``isoformat()`` alone emits
+    ``2026-11-13T01:36:23`` — and every browser reads that as *local* wall time,
+    which is the other half of the date bug. Timestamps leave the API as
+    ``2026-11-13T01:36:23.123456Z``: naive values are interpreted as UTC, aware
+    values are converted to UTC first, and the result always carries the marker.
+
+    Calendar dates do not come through here — they are ``date`` objects and stay
+    ``YYYY-MM-DD`` with no timezone at all.
+    """
+    if value is None:
+        return None
+    utc = ZoneInfo(DEFAULT_TIMEZONE)
+    value = value.replace(tzinfo=utc) if value.tzinfo is None else value.astimezone(utc)
+    return value.isoformat().replace("+00:00", "Z")

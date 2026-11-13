@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { timezoneHeader } from '../deviceTz';
+import { parseDateOnly, parseInstant } from '../dates';
 
 /**
  * Nirvaah "life" data layer — notes, tasks and life events.
@@ -122,14 +123,18 @@ export const shiftISO = (iso, days) => {
 
 export function parseDate(value) {
     if (!value) return null;
-    if (typeof value === 'number') return value;
-    const iso = String(value).slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-        const t = new Date(`${iso}T00:00:00`).getTime();
-        return Number.isNaN(t) ? null : t;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    const text = String(value);
+    // A timestamp is an instant (it carries a `T` and, since the API change, a `Z`);
+    // a bare YYYY-MM-DD is a calendar day that must not drift through UTC.
+    if (text.includes('T')) {
+        const instant = parseInstant(text);
+        return instant ? instant.getTime() : null;
     }
-    const t = new Date(value).getTime();
-    return Number.isNaN(t) ? null : t;
+    const day = parseDateOnly(text);
+    if (day) return day.getTime();
+    const fallback = parseInstant(text);
+    return fallback ? fallback.getTime() : null;
 }
 
 export const toISODate = value => {
