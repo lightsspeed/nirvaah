@@ -198,6 +198,47 @@ def list_messages(conversation_id: str, db: Session = Depends(get_db), user=Depe
     return [_message_out(m) for m in rows]
 
 
+def _recent_records(prior: list) -> dict[str, list[str]]:
+    """Ids each record kind was most recently *created* with in this conversation.
+
+    Read from what the turns already store (`chat_messages.meta.applied`), newest
+    first: no new table, no second memory system. A follow-up that says "move the
+    task to Monday" needs a referent even when the conversation's focus row points
+    at another record type — turn 1 can create a task *and* a journal entry, and
+    only the last write survives in `chat_focus`.
+
+    The newest creating turn per kind wins, so an old task from ten turns ago
+    cannot become "the task" again.
+    """
+    found: dict[str, list[str]] = {}
+    scanned = 0
+    for message in reversed(prior or []):
+        if getattr(message, "role", "") != "assistant":
+            continue
+        scanned += 1
+        try:
+            meta = json.loads(message.meta or "{}")
+        except ValueError:
+            continue
+        if not isinstance(meta, dict):
+            continue
+        batch: dict[str, list[str]] = {}
+        for item in meta.get("applied") or []:
+            kind = str(item.get("entity_type") or "")
+            entity_id = item.get("entity_id")
+            if not kind or entity_id in (None, ""):
+                continue
+            if not str(item.get("operation") or "").startswith("add_"):
+                continue
+            batch.setdefault(kind, []).append(str(entity_id))
+        for kind, ids in batch.items():
+            # The newest creating turn per kind wins; older ones never overwrite.
+            found.setdefault(kind, ids)
+        if scanned >= 3 or len(found) >= 3:
+            break
+    return found
+
+
 @router.post("/conversations/{conversation_id}/messages")
 def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(get_db),
                  user=Depends(get_current_user), today: date = Depends(user_today),
@@ -227,7 +268,8 @@ def send_message(conversation_id: str, data: MessageIn, db: Session = Depends(ge
     try:
         result = graph.run_turn(db, user, conversation_id, text, history, turn=turn,
                                 prefer=(data.prefer or "").strip()[:80], today=today,
-                                chat_context=chat_context)
+                                chat_context=chat_context,
+                                recent_records=_recent_records(prior))
     except providers.ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
 

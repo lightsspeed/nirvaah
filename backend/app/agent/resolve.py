@@ -31,7 +31,10 @@ ENTITIES: dict[str, tuple[type, str, str]] = {
 }
 
 # Words that describe the request rather than the record. "reschedule my servicing
-# task" must score on "servicing", not on "task".
+# task" must score on "servicing", not on "task". The second block is instruction
+# vocabulary: a follow-up often carries the whole sentence ("move the due date of
+# the task 'Submit project report' from Friday to Monday, keep the title") and
+# those words must not dilute the one name that identifies the row.
 STOPWORDS = {
     "the", "and", "for", "with", "from", "that", "this", "these", "those", "delete", "remove",
     "drop", "erase", "update", "change", "edit", "set", "make", "please", "can", "you", "your",
@@ -41,6 +44,14 @@ STOPWORDS = {
     "one", "some", "all", "just", "about", "need", "want", "would", "like", "then", "than",
     "reschedule", "rename", "move", "mark", "complete", "completed", "done", "priority", "date",
     "due", "add", "create", "new", "high", "low", "medium", "next", "last", "today", "tomorrow",
+    # instruction vocabulary
+    "moved", "moving", "shift", "shifted", "postpone", "postponed", "push", "pushed", "keep",
+    "keeping", "kept", "leave", "leaving", "title", "details", "detail", "rest", "everything",
+    "unchanged", "other", "others", "same", "only", "should", "must", "still", "also", "after",
+    "before", "instead", "rather", "wants", "prefer", "assume", "tell",
+    # calendar words name a day, not a record
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "mon", "tue", "wed", "thu", "fri", "sat", "sun", "week", "weeks", "month", "months",
 }
 
 _WORD = re.compile(r"[a-z0-9]+")

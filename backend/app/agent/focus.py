@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..timeutil import utcnow
 from . import obs
+from . import resolve as resolver
 
 # "it", "that", "this", "them", "the same one", "its due date"… and the
 # relative forms the prompt already promises: "the last one", "the latest
@@ -27,6 +28,20 @@ PRONOUN = re.compile(
     r"investment|liability|reminder))\b",
     re.I,
 )
+
+# A name field that opens with one of these is the instruction, not the record:
+# models routinely copy "Move the task to Monday" into `text`.
+_INSTRUCTION_VERB = re.compile(
+    r"^\s*(move|moved|change|changed|update|updated|reschedule|rescheduled|push|shift|postpone|"
+    r"set|mark|rename|edit|keep|make)\b", re.I)
+_DAY_WORD = re.compile(
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|"
+    r"tomorrow|today|tonight|next week|this week)\b", re.I)
+
+
+def _instruction_shaped(name: str) -> bool:
+    """True when the 'name' reads as the sentence around the record."""
+    return bool(_INSTRUCTION_VERB.search(name) or _DAY_WORD.search(name)) or len(name.split()) > 8
 
 
 def get(db: Session, user, conversation_id: str) -> dict | None:
@@ -76,8 +91,16 @@ def looks_like_followup(message: str) -> bool:
     return bool(PRONOUN.search(message or ""))
 
 
-def apply(db: Session, user, conversation_id: str, action: dict, message: str) -> dict:
-    """Give an action its referent when it has none of its own."""
+def apply(db: Session, user, conversation_id: str, action: dict, message: str,
+          recent: dict[str, list[str]] | None = None) -> dict:
+    """Give an action its referent when it has none of its own.
+
+    ``recent`` maps an entity kind to the ids it was most recently *created* with
+    in this conversation (the API reads it from the turns already stored). It is
+    the fallback for the case the single focus row cannot cover: turn 1 creates a
+    task and a journal entry, so focus points at the journal, and turn 2 says
+    "move the task to Monday".
+    """
     op = str(action.get("op") or "")
     if not op.startswith(("update_", "delete_")):
         return action
@@ -89,24 +112,53 @@ def apply(db: Session, user, conversation_id: str, action: dict, message: str) -
         "task": "text", "note": "title", "journal": "title", "goal": "name",
         "investment": "name", "liability": "name", "budget": "category",
     }.get(kind)
-    # The model already named the record — trust the name, not the focus.
-    if name_field and str(action.get(name_field) or "").strip():
-        return action
-    if not looks_like_followup(message):
+    followup = looks_like_followup(message)
+
+    # The model already named the record — trust the name, not the focus. A name
+    # that matches nothing, though, is the instruction copied into the field:
+    # "move the task to monday" resolves to no row, and only then does the
+    # conversation decide.
+    name = str(action.get(name_field) or "").strip() if name_field else ""
+    if name:
+        found = resolver.resolve(db, user, kind, query=name)
+        if found.ok:
+            if not _instruction_shaped(name):
+                return action
+            # The name carried the change too ("Submit project report from Friday
+            # to Monday"): it found the row, so only the requested field is written.
+            action = dict(action)
+            action.pop(name_field, None)
+            action["id"] = str(found.row.id)
+            obs.event("focus_name_trimmed", entity_type=kind, entity_id=str(found.row.id))
+            return action
+        if not (followup or _instruction_shaped(name)):
+            return action
+        action = {k: v for k, v in action.items() if k != name_field}
+        obs.event("focus_instruction_name", entity_type=kind, label=name[:60])
+
+    if not followup:
         return action
 
-    focus = get(db, user, conversation_id)
-    if not focus:
-        return action
-    if focus["entity_type"] != kind:
-        # "make it high priority" while the focus is a note: give the model the
-        # chance to have meant something else rather than retargeting silently.
-        obs.event("focus_type_mismatch", focus_type=focus["entity_type"], action_type=kind)
-        return action
+    # The records this conversation most recently created of this kind decide
+    # first: one means "the task", more than one means the user has to say which.
+    batch = [str(i) for i in ((recent or {}).get(kind) or []) if i not in (None, "")]
+    focused = get(db, user, conversation_id)
+    if batch:
+        candidates, source = batch, "recent"
+    elif focused and focused["entity_type"] == kind:
+        candidates, source = [str(focused["entity_id"])], "focus"
+    else:
+        candidates, source = [], ""
 
-    action = dict(action)
-    action["id"] = focus["entity_id"]
-    # An explicit reference: the word-overlap guard has nothing to add here.
-    action["from_focus"] = True
-    obs.event("focus_applied", entity_type=kind, entity_id=focus["entity_id"], operation=op)
+    if len(candidates) == 1:
+        action = dict(action)
+        action["id"] = candidates[0]
+        # An explicit reference: the word-overlap guard has nothing to add here.
+        action["from_focus"] = True
+        obs.event("focus_applied", entity_type=kind, entity_id=candidates[0], operation=op,
+                  source=source)
+        return action
+    if len(candidates) > 1:
+        # More than one record could be "the task": ask, never guess.
+        obs.event("focus_ambiguous", entity_type=kind, candidates=len(candidates))
     return action

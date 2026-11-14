@@ -180,7 +180,8 @@ def _facts_block(analysis: dict) -> str:
 def _nodes(db: Session, user, turn: int, prefer: str = "",
            conversation_id: str = "", today: date | None = None,
            progress: dict | None = None,
-           timezone_name: str | None = None) -> dict[str, Callable[[ChatState], dict]]:
+           timezone_name: str | None = None,
+           recent_records: dict[str, list[str]] | None = None) -> dict[str, Callable[[ChatState], dict]]:
     # Ground truth about this turn, kept outside the graph state: when invoke()
     # raises we still have to know which node ran and which action was in flight.
     progress = progress if progress is not None else {}
@@ -351,7 +352,8 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
                     "steps": (state.get("steps") or []) + ["act"]}
 
         for raw_action in (state.get("actions") or [])[:10]:
-            action = focus_mod.apply(db, user, conversation_id, raw_action, message)
+            action = focus_mod.apply(db, user, conversation_id, raw_action, message,
+                                     recent=progress.get("recent_records"))
             op = str(action.get("op") or "")
 
             # An id inherited from the focus record is an explicit reference,
@@ -610,6 +612,7 @@ def run_turn(
     today: date | None = None,
     chat_context: dict | None = None,
     timezone_name: str | None = None,
+    recent_records: dict[str, list[str]] | None = None,
 ) -> dict:
     """Run one turn of a conversation and return the reply plus what changed.
 
@@ -623,9 +626,11 @@ def run_turn(
     """
     progress: dict = {"stage": "start", "recalled": False, "thought": False,
                       "reply": "", "actions": [], "act_started": False,
-                      "in_flight": "", "results": [], "analytics": {}}
+                      "in_flight": "", "results": [], "analytics": {},
+                      "recent_records": recent_records or {}}
     nodes = _nodes(db, user, turn, prefer, conversation_id=conversation_id, today=today,
-                   progress=progress, timezone_name=timezone_name)
+                   progress=progress, timezone_name=timezone_name,
+                   recent_records=recent_records)
     payload: ChatState = {
         "message": message,
         "history": history[-HISTORY_LIMIT:],
