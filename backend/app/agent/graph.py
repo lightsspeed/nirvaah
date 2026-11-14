@@ -37,7 +37,7 @@ from ..ai import (
     parse_model_output,
     system_prompt,
 )
-from . import execution, focus as focus_mod, obs, planner, providers
+from . import execution, focus as focus_mod, multi, obs, planner, providers
 from . import resolve as resolver
 from .months import resolve_focus_month
 from .reply import claims_change, normalize_currency
@@ -77,6 +77,7 @@ class ChatState(TypedDict, total=False):
     failed: list[dict]
     steps: list[str]
     retried: bool
+    multi_retried: bool
     analytics: dict
     chat_context: dict
     focus: dict
@@ -285,6 +286,27 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             if second_actions:
                 reply, text, actions = second, second_text, second_actions
 
+        # A message that asks for two records and comes back with one is the quiet
+        # half-failure: the turn ends, the reply claims the whole, and only one row
+        # exists. Ask once for the records the actions leave out.
+        missing = multi.missing_kinds(state.get("message") or "", actions)
+        if missing and not state.get("multi_retried"):
+            ask_for_more = {
+                "role": "system",
+                "content": (
+                    "Correction: this message asks for more than one record and your actions "
+                    "do not cover all of them. Return every requested action in the same "
+                    f"\"actions\" array — {', '.join(missing)} is missing. One action per "
+                    "record, each with its own op."
+                ),
+            }
+            extra = providers.ask([*messages, {"role": "assistant", "content": text}, ask_for_more],
+                                  validate=_json_ok, prefer=prefer)
+            extra_text, extra_actions = parse_model_output(extra.text)
+            still_missing = multi.missing_kinds(state.get("message") or "", extra_actions)
+            if extra_actions and len(still_missing) < len(missing):
+                reply, text, actions = extra, (extra_text or text), extra_actions
+
         progress.update(thought=True, reply=text, actions=list(actions))
         return {
             "raw": reply.text,
@@ -295,6 +317,7 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             "reply": text,
             "actions": actions,
             "retried": True,
+            "multi_retried": True,
             "steps": (state.get("steps") or []) + ["think"],
         }
 
@@ -409,6 +432,13 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             reply = facts.get("question") or "Which transactions do you mean?"
         elif uncertain and not applied and not pending:
             reply = uncertain[0].get("error") or UNCERTAIN_NOTE
+        elif applied and failed:
+            # Some records were saved and some were not. The model cannot be left to
+            # describe which is which — it wrote its sentence before the writes ran —
+            # so the verified results word the turn.
+            obs.event("partial_success", conversation_id=conversation_id, turn=turn,
+                      applied=len(applied), failed=len(failed))
+            reply = multi.partial_reply(applied, failed)
         elif failed and not applied and not pending:
             # The execution layer's own words: "did not persist", "3 tasks match …"
             reply = failed[0].get("error") or "I could not do that — nothing was changed."
@@ -615,6 +645,7 @@ def run_turn(
         "degraded": "",
         "note": "",
         "retried": False,
+        "multi_retried": False,
     }
 
     if LANGGRAPH_AVAILABLE:

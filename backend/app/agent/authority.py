@@ -63,6 +63,20 @@ QUESTION = re.compile(
 # …unless the question is the polite frame around a request: "can you add …".
 POLITE = re.compile(r"^\s*(?:please\s+|hey\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?")
 
+# "Add ₹1,238 for Ramayan movie in Entertainment" names no record noun — the
+# amount and where it went *are* the record. Without this, a compound request
+# ("…, also add as a journal entry") authorised the journal and refused the
+# expense, so the user was told both were saved while only one was.
+# `normalise` strips the currency sign and the separators, so "₹1,238" is the
+# two tokens "1 238": the amount check runs on the normalised text.
+AMOUNT = re.compile(r"\b\d{2,}(?:\.\d{1,2})?\b")
+SPEND_CUE = re.compile(r"\b(?:for|on|at|in|towards|toward)\b")
+# A goal, budget or investment also carries an amount; those have their own noun
+# and must not be recorded as spending.
+OTHER_MONEY = re.compile(
+    r"\b(?:goals?|targets?|budgets?|limits?|investments?|invest|sips?|mutual funds?|"
+    r"stocks?|liabilit(?:y|ies)|loans?|debts?|emis?)\b")
+
 
 def authorize_creation(op: str, message: str) -> str | None:
     """None when the message asks for this creation, else the refusal to show.
@@ -98,6 +112,14 @@ def authorize_creation(op: str, message: str) -> str | None:
         if REPORT.search(text):
             return None
         if VERB.search(head) and nouns.search(head):
+            return None
+        # A stated amount tied to where the money went ("₹1,238 for the Ramayan
+        # movie in Entertainment") is a request to record a spend even when the
+        # words "expense" or "transaction" never appear. The record noun is
+        # implied, so demanding it refused real requests — including the expense
+        # half of a compound one that also named a journal entry.
+        if (VERB.search(head) and AMOUNT.search(text) and SPEND_CUE.search(text)
+                and not OTHER_MONEY.search(text)):
             return None
         return _refusal(message, kind)
 
