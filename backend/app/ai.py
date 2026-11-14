@@ -488,11 +488,15 @@ def guard_action(db: Session, user, action: dict, message: str) -> str | None:
 
     Two checks live here, both deterministic. A creation must be asked for in the
     message itself (`authority.authorize_creation`) — a model must never turn a
-    question into a write. An update or delete must target a record whose name
-    matches the words in the request, scored the same way as `agent.resolve` so
-    the two cannot disagree. A follow-up with no identifying words of its own
-    ("make it high priority") is allowed through — the conversation's focus
-    record decides what it means.
+    question into a write. An update or delete must not target a *different*
+    record than the words describe: the message is resolved again, and the action
+    is refused only when the message points at some other row of that kind.
+
+    The earlier version compared the message against the found row's own name and
+    refused when the overlap was thin. That is wrong for every follow-up: "move
+    the task to Monday", "actually, make it Wednesday", "yes, do it" and "change
+    the journal entry to say I completed the VPC module" name no record at all,
+    so they failed while the model had already picked the right row.
     """
     from .agent import resolve as _resolve
 
@@ -522,7 +526,13 @@ def guard_action(db: Session, user, action: dict, message: str) -> str | None:
     if row is None:
         return None  # not found / ambiguous: the executor reports it precisely
 
-    if _resolve.score(row, message) >= _resolve.ACCEPT_SCORE:
+    # Does the message describe some *other* row of this kind? Only then is the
+    # model's target wrong. A follow-up resolves to nothing, which is not a
+    # disagreement — the conversation's focus already named the record.
+    described = _resolve.resolve(db, user, kind, query=message)
+    if not described.ok or str(described.row.id) == str(row.id):
+        return None
+    if _resolve.score(row, message) >= described.score:
         return None
     return (f'The {label} I found does not match "{message.strip()}" — nothing was changed. '
             f"Tell me the exact name, amount or date.")

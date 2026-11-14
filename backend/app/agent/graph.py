@@ -37,7 +37,7 @@ from ..ai import (
     parse_model_output,
     system_prompt,
 )
-from . import execution, focus as focus_mod, multi, obs, planner, providers
+from . import confirm, execution, focus as focus_mod, multi, obs, planner, providers
 from . import resolve as resolver
 from .months import resolve_focus_month
 from .reply import claims_change, normalize_currency
@@ -355,6 +355,34 @@ def _nodes(db: Session, user, turn: int, prefer: str = "",
             action = focus_mod.apply(db, user, conversation_id, raw_action, message,
                                      recent=progress.get("recent_records"))
             op = str(action.get("op") or "")
+
+            # A bare "yes, do it" may only approve a record this conversation was
+            # just working with — never an older, unrelated one.
+            if op.startswith(("update_", "delete_")) and confirm.is_confirmation(message):
+                kind = op.split("_", 1)[1]
+                name_field = (resolver.ENTITIES.get(kind) or (None, "", ""))[1]
+                target = str(action.get("id") or "")
+                if not target and name_field:
+                    named = str(action.get(name_field) or "").strip()
+                    if named:
+                        found = resolver.resolve(db, user, kind, query=named)
+                        target = str(found.row.id) if found.ok else ""
+                allowed = confirm.allowed_targets(kind, focus_mod.get(db, user, conversation_id),
+                                                  progress.get("recent_records"))
+                if not allowed:
+                    error = confirm.NOTHING_PENDING
+                elif target not in allowed:
+                    error = confirm.STALE_TARGET
+                else:
+                    error = ""
+                if error:
+                    result = execution._result(op, kind, success=False, error=error)
+                    results.append(result)
+                    progress["results"].append(result)
+                    obs.inc("confirmation_refused")
+                    obs.event("confirmation_refused", conversation_id=conversation_id,
+                              turn=turn, tool=op, reason="no_pending" if not allowed else "stale")
+                    continue
 
             # An id inherited from the focus record is an explicit reference,
             # so the "does this row match the words?" check would only fight it.
