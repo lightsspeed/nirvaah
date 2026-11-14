@@ -46,7 +46,7 @@ export default function AssistantPage({ api, user, onChanged }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
-    const [listOpen, setListOpen] = useState(true);
+    const [listOpen, setListOpen] = useState(false);
     const bodyRef = useRef(null);
     const fieldRef = useRef(null);
 

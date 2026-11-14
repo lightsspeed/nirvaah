@@ -414,7 +414,14 @@
   font-size: var(--text-base);
   line-height: 1.5;
 }
-.ai-composer textarea:focus { outline: 2px solid var(--ring); outline-offset: 1px; }
+.ai-composer textarea:focus,
+.ai-composer textarea:focus-visible {
+  /* The composer should not shout: a hairline tint on the border and a barely
+     visible halo, instead of the 2px ring used for page controls. */
+  outline: none;
+  border-color: color-mix(in srgb, var(--ring) 20%, var(--input));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 7%, transparent);
+}
 .ai-send {
   display: inline-flex;
   align-items: center;
