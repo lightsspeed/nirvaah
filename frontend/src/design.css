@@ -2603,6 +2603,17 @@ button.soft {
   background: var(--accent) !important;
 }
 
+/* Pill controls sit in horizontal scrollers (.life-chip-row, .life-segmented),
+   which clip at their padding box and shave an outside focus ring down to two
+   arcs or a single side. Drawing the ring inside the pill keeps it whole at
+   every scroll position, and reads as a selected border. */
+.life-chip:focus-visible,
+.seg:focus-visible,
+.life-segmented button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 /* Pills inside rows (task category / priority) */
 .task-cat,
 .task-prio {
@@ -3520,6 +3531,166 @@ select {
   min-width: 0 !important;
   flex-wrap: nowrap;
   overflow-x: auto;
+}
+
+/* Chips that live inside a toolbar take the space between the tabs and the
+   right-hand controls, scrolling when they run out of room, so the toolbar
+   stays one line instead of pushing the filters onto a row of their own. */
+.life-toolbar > .life-chip-row {
+  flex: 1 1 0%;
+  min-width: 0;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  scrollbar-width: none;
+}
+
+.life-toolbar > .life-chip-row::-webkit-scrollbar {
+  display: none;
+}
+
+/* Note cards are the same colour as the frame; inside the panel they take the
+   inset surface so each one still reads as a card. */
+.life-panel .note-card {
+  background: var(--bg-inset);
+}
+
+/* Journal, Tasks and Notes sit in the same card as the transactions table, so
+   every workspace in the app has one frame. The flat-tile pass near the end of
+   this file strips `.panel`'s border and sets 22px padding, so these values are
+   stated here with the same weight `.panel.transactions-panel` uses.
+
+   The box is fixed: the page itself does not scroll on these three pages — the
+   header, the stat tiles and the filter row stay put, and the list scrolls
+   inside the frame, which ends just above the footer. */
+.life-page > .life-panel {
+  flex: 1 1 auto;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+/* The scroller owns the padding so the content scrolls edge to edge. */
+.life-panel > .life-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 20px 20px;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+/* Only these three pages become a fixed-height workspace. The box keeps a floor
+   so a short window scrolls the page instead of hiding the list entirely. */
+.content:has(.life-page) {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto !important;
+}
+
+.content:has(.life-page) .life-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 768px) {
+  .life-page > .life-panel {
+    padding: 0 !important;
+  }
+
+  .life-panel > .life-scroll {
+    padding: 10px 14px 14px;
+  }
+}
+
+.life-toolbar > .life-chip {
+  flex: 0 0 auto;
+}
+
+/* One row, one size: the segmented tabs, the chips, the manage chip and the
+   filter selects all take the same height and the same type size, so the
+   toolbar reads as a single strip instead of four different controls. */
+.life-toolbar > .life-segmented,
+.life-toolbar > .life-chip-row > .life-chip,
+.life-toolbar > .life-chip,
+.life-toolbar > .life-toolbar-right .life-select,
+.life-toolbar > .life-toolbar-right .life-toggle,
+.life-toolbar > .life-toolbar-right .life-btn {
+  height: var(--control-h-sm) !important;
+  font-size: var(--text-sm) !important;
+}
+
+/* A long category name scrolls the strip; the chip itself never wraps to two
+   lines, which is what made one chip look taller than the rest. */
+.life-toolbar > .life-chip-row > .life-chip,
+.life-toolbar > .life-chip {
+  white-space: nowrap;
+}
+
+/* In the filter row a select is one line. Its stacked "YEAR / All years" form
+   needs about 50px; forced into the shared 34px row the label clips at the top
+   edge. The label is redundant next to the value, so it is dropped here and the
+   value sits centred like every other control in the strip. The wrapper is
+   targeted too: `.life-select-wrap.is-compact` sets 40px at the same weight and
+   would otherwise win on source order. */
+.life-toolbar > .life-toolbar-right .life-select-wrap,
+.life-toolbar > .life-toolbar-right .life-select-wrap .life-select,
+.life-toolbar > .life-toolbar-right .life-select {
+  height: var(--control-h-sm) !important;
+  min-height: 0 !important;
+  padding: 0 28px 0 12px !important;
+  gap: 0 !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+}
+
+.life-toolbar > .life-toolbar-right .life-select > span {
+  display: none !important;
+}
+
+.life-toolbar > .life-toolbar-right .life-select.as-button > b,
+.life-toolbar > .life-toolbar-right .life-select > b {
+  font-size: var(--text-sm) !important;
+  line-height: 1 !important;
+  max-width: 100%;
+}
+
+/* The chip strip scrolls, so its right edge used to slice the next chip in half
+   and read as a broken button. It now fades out, which says "more to the right"
+   instead. The trailing padding keeps the last chip clear of the fade once it
+   has been scrolled to the end. */
+.life-toolbar > .life-chip-row {
+  padding-right: 18px;
+  margin-right: 4px;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.life-toolbar > .life-segmented {
+  padding: 0 3px !important;
+}
+
+.life-toolbar > .life-segmented button {
+  height: 100% !important;
+}
+
+.life-toolbar > .life-toolbar-right .life-select select,
+.life-toolbar > .life-toolbar-right .life-select input {
+  font-size: var(--text-sm) !important;
+}
+
+/* The category chips moved into the toolbar, so the progress meter is the only
+   thing left in its row — keep it at the right edge where it used to sit. */
+.task-progress-row > .task-progress:only-child {
+  margin-left: auto;
 }
 
 .life-page,
@@ -6038,4 +6209,154 @@ main > header .topbar-search {
   color: var(--muted-foreground);
   letter-spacing: 0.02em;
   text-transform: none;   /* the footer is uppercased; a version tag must not be */
+}
+
+/* ==========================================================================
+   Confirmation dialogs — one designed dialog for every destructive action,
+   replacing the browser's confirm() box. Matches .modal / .life-modal: same
+   scrim, popover surface, radius, elevation and entrance animation.
+   ========================================================================== */
+.confirm-layer {
+  position: fixed;
+  inset: 0;
+  /* Above the life modals (9990) so a confirmation can sit on top of a dialog. */
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(20 19 18 / 0.55);
+  backdrop-filter: blur(2px);
+  animation: scrim-in var(--duration-fast) var(--ease-out);
+}
+
+.confirm-card {
+  width: min(430px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'icon copy close'
+    'actions actions actions';
+  gap: 2px 13px;
+  padding: 20px 20px 16px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elevation-l2);
+  animation: dialog-in var(--duration-base) var(--ease-out);
+}
+
+.confirm-icon {
+  grid-area: icon;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  border-radius: 9px;
+  color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--destructive) 22%, transparent);
+}
+
+.confirm-icon.is-info {
+  color: var(--ring);
+  background: color-mix(in srgb, var(--ring) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ring) 22%, transparent);
+}
+
+.confirm-copy {
+  grid-area: copy;
+  min-width: 0;
+}
+
+.confirm-copy h3 {
+  margin: 0 0 5px;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+
+.confirm-copy p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.confirm-copy .confirm-note {
+  margin-top: 7px;
+  font-size: var(--text-xs);
+  opacity: 0.82;
+}
+
+.confirm-close {
+  grid-area: close;
+  align-self: start;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: -2px -2px 0 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color .14s ease, background .14s ease, border-color .14s ease;
+}
+
+.confirm-close:hover {
+  color: var(--foreground);
+  background: var(--muted);
+  border-color: var(--border);
+}
+
+.confirm-actions {
+  grid-area: actions;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.confirm-actions .life-btn {
+  min-width: 84px;
+  justify-content: center;
+}
+
+.life-btn.is-danger-solid {
+  background: var(--destructive);
+  border: 1px solid var(--destructive);
+  color: var(--destructive-foreground);
+}
+
+.life-btn.is-danger-solid:hover {
+  filter: brightness(1.07);
+}
+
+@media (max-width: 480px) {
+  .confirm-card {
+    padding: 18px 16px 14px;
+  }
+
+  .confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .confirm-actions .life-btn {
+    width: 100%;
+  }
+}
+
+/* The filter-row selects must match the strip's 34px. `.life-select-wrap.is-compact
+   .life-select.as-button` sets `--btn-h` (40px) further up this file and wins on
+   source order, so the row height is restated here, after it. */
+.life-toolbar > .life-toolbar-right .life-select-wrap,
+.life-toolbar > .life-toolbar-right .life-select-wrap .life-select.as-button,
+.life-toolbar > .life-toolbar-right .life-select.as-button {
+  height: var(--control-h-sm) !important;
+  min-height: 0 !important;
+  padding: 0 28px 0 12px !important;
 }

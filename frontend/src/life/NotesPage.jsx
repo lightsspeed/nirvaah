@@ -8,6 +8,7 @@ import {
     NOTES_KEY, tintOf, categoryPool, useCategories,
 } from './store';
 import { PageHero, StatTile, Chip, EmptyState, Modal, CategoryManager, Select } from './ui';
+import { useConfirm } from '../ConfirmDialog';
 
 const SORTS = [
     { id: 'updated', label: 'Recently edited' },
@@ -178,6 +179,8 @@ function NoteEditor({ note, onClose, onSave, onDelete }) {
 }
 
 export default function NotesPage() {
+    // Destructive actions ask through the app's own dialog, never confirm().
+    const { ask, dialog } = useConfirm();
     const [notes, setNotes] = useCollection(NOTES_KEY);
     const [cats, setCats] = useCategories('note');
     const pool = useMemo(() => categoryPool(cats, notes), [cats, notes]);
@@ -227,8 +230,13 @@ export default function NotesPage() {
         setEditing(null);
     };
 
-    const deleteNote = note => {
-        if (!window.confirm(`Delete “${note.title}”? This can’t be undone.`)) return;
+    const deleteNote = async note => {
+        const ok = await ask({
+            title: `Delete “${note.title}”?`,
+            message: 'The note is removed for good. This cannot be undone.',
+            confirmLabel: 'Delete note',
+        });
+        if (!ok) return;
         setNotes(prev => prev.filter(n => n.id !== note.id));
         logActivity(`Note deleted: “${note.title}”`, 'note');
         setEditing(null);
@@ -249,6 +257,7 @@ export default function NotesPage() {
 
     return (
         <div className="life-page notes-page">
+            {dialog}
             <PageHero>
                 <button type="button" className="life-btn is-primary" onClick={() => setEditing(emptyDraft())}>
                     <Plus size={15} /> New note
@@ -291,6 +300,8 @@ export default function NotesPage() {
                 </div>
             </div>
 
+            <div className="panel life-panel">
+            <div className="life-scroll">
             {visible.length === 0 ? (
                 <EmptyState
                     icon={showArchived ? Archive : FileText}
@@ -332,6 +343,8 @@ export default function NotesPage() {
                     )}
                 </>
             )}
+            </div>
+            </div>
 
             {editing && (
                 <NoteEditor

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Plus, Search, Trash2, X } from 'lucide-react';
 import { tintOf } from './store';
+import { useConfirm } from '../ConfirmDialog';
 
 export function PageHero({ title, description, children }) {
     // The page name and its subtext live in the app header now; the hero only
@@ -129,6 +130,7 @@ export function Progress({ value, tint = '#7fa650' }) {
 export function CategoryManager({ open, onClose, title = 'Manage categories', categories, onChange, onRename, onDelete }) {
     const [draft, setDraft] = useState('');
     const [edits, setEdits] = useState({});
+    const { ask, dialog } = useConfirm();
 
     useEffect(() => {
         if (!open) { setDraft(''); setEdits({}); }
@@ -145,8 +147,15 @@ export function CategoryManager({ open, onClose, title = 'Manage categories', ca
         setEdits(e => ({ ...e, [from]: undefined }));
     };
 
-    const remove = cat => {
+    const remove = async cat => {
         if (categories.length <= 1) return;
+        const fallback = categories.find(c => c !== cat);
+        const ok = await ask({
+            title: `Delete the “${cat}” category?`,
+            message: `Records filed under it move to “${fallback}”. Nothing else is deleted.`,
+            confirmLabel: 'Delete category',
+        });
+        if (!ok) return;
         onChange(categories.filter(c => c !== cat));
         onDelete && onDelete(cat);
     };
@@ -211,6 +220,7 @@ export function CategoryManager({ open, onClose, title = 'Manage categories', ca
             <p className="cat-manage-hint">
                 Renaming or deleting a category moves its records to the first remaining one.
             </p>
+            {dialog}
         </Modal>
     );
 }

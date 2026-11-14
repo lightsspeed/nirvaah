@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Plus, BookOpen, CalendarDays, Pencil, Trash2, Sparkles, Activity,
+    Plus, BookOpen, CalendarDays, CalendarCheck, Pencil, Trash2, Sparkles, Activity,
     IndianRupee, Wallet, StickyNote, ListChecks, Settings2, SlidersHorizontal,
     CircleDot,
 } from 'lucide-react';
@@ -11,6 +11,7 @@ import {
 } from './store';
 import { parseDateOnly, yearOf } from '../dates';
 import { PageHero, StatTile, Chip, SearchField, Segmented, EmptyState, Modal, CategoryManager } from './ui';
+import { useConfirm } from '../ConfirmDialog';
 
 const MOODS = ['great', 'good', 'steady', 'low', 'hard'];
 
@@ -175,6 +176,8 @@ function EventEditor({ event, onClose, onSave, onDelete }) {
 }
 
 export default function JournalPage() {
+    // Destructive actions ask through the app's own dialog, never confirm().
+    const { ask, dialog } = useConfirm();
     const [events, setEvents] = useCollection(EVENTS_KEY);
     const [cats, setCats] = useCategories('event');
     const pool = useMemo(() => categoryPool(cats, events), [cats, events]);
@@ -195,11 +198,12 @@ export default function JournalPage() {
     const stats = useMemo(() => {
         const thisMonth = monthKey(Date.now());
         const inMonth = events.filter(e => monthKey(e.date) === thisMonth);
-        const money = events.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+        // Distinct days with an entry — the journal's own rhythm, no money in it.
+        const days = new Set(events.map(e => e.date)).size;
         const byCat = {};
         events.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + 1; });
         const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
-        return { inMonth: inMonth.length, total: events.length, money, top: top ? top[0] : '—' };
+        return { inMonth: inMonth.length, total: events.length, days, top: top ? top[0] : '—' };
     }, [events]);
 
     const catCounts = useMemo(() => {
@@ -258,8 +262,13 @@ export default function JournalPage() {
         setEditing(null);
     };
 
-    const deleteEvent = event => {
-        if (!window.confirm(`Delete “${event.title}” from your journal?`)) return;
+    const deleteEvent = async event => {
+        const ok = await ask({
+            title: `Delete “${event.title}”?`,
+            message: 'The entry is removed from your journal. This cannot be undone.',
+            confirmLabel: 'Delete entry',
+        });
+        if (!ok) return;
         setEvents(prev => prev.filter(e => e.id !== event.id));
         logActivity(`Life event removed: “${event.title}”`, 'system');
         setEditing(null);
@@ -276,6 +285,7 @@ export default function JournalPage() {
 
     return (
         <div className="life-page journal-page">
+            {dialog}
             <PageHero>
                 <button type="button" className="life-btn is-primary" onClick={() => setEditing(emptyEvent())}>
                     <Plus size={15} /> Log event
@@ -285,7 +295,7 @@ export default function JournalPage() {
             <div className="life-stats">
                 <StatTile label="This month" value={stats.inMonth} hint="Moments logged in the current month" icon={CalendarDays} tint="#d97757" />
                 <StatTile label="All events" value={stats.total} hint="Your running life timeline" icon={BookOpen} tint="#c9a227" />
-                <StatTile label="Money touched" value={stats.money ? `₹${stats.money.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'} hint="Sum of amounts attached to events" icon={IndianRupee} tint="#7fa650" />
+                <StatTile label="Days written" value={stats.days} hint="Distinct days with an entry" icon={CalendarCheck} tint="#7fa650" />
                 <StatTile label="Most logged" value={stats.top} hint="Category with the most entries" icon={CircleDot} tint="#6a9bd0" />
             </div>
 
@@ -298,6 +308,33 @@ export default function JournalPage() {
                     value={tab}
                     onChange={setTab}
                 />
+                {tab === 'events' && (
+                    <div className="life-chip-row">
+                        <Chip label="All" active={category === 'All'} count={catCounts.All} onClick={() => setCategory('All')} tint="#a89f94" />
+                        {pool.map(c => (
+                            <Chip key={c} label={c} active={category === c} count={catCounts[c]} onClick={() => setCategory(c)} />
+                        ))}
+                    </div>
+                )}
+                {tab === 'events' && (
+                    <button type="button" className="life-chip is-manage" onClick={() => setManageCats(true)} title="Add, rename or delete categories">
+                        <SlidersHorizontal size={13} /><span>Manage</span>
+                    </button>
+                )}
+                {tab === 'activity' && (
+                    <div className="life-chip-row">
+                        {['all', 'money', 'notes', 'tasks', 'system', 'account'].map(id => (
+                            <Chip
+                                key={id}
+                                label={id === 'all' ? 'All activity' : id.charAt(0).toUpperCase() + id.slice(1)}
+                                active={typeFilter === id}
+                                onClick={() => setTypeFilter(id)}
+                                tint={id === 'all' ? '#a89f94' : activityMeta(id === 'money' ? 'money' : id === 'account' ? 'auth' : id.slice(0, -1)).tint}
+                                dot={id !== 'all'}
+                            />
+                        ))}
+                    </div>
+                )}
                 {tab === 'events' ? (
                     <div className="life-toolbar-right">
                         <label className="life-select">
@@ -309,25 +346,19 @@ export default function JournalPage() {
                     </div>
                 ) : (
                     <div className="life-toolbar-right">
-                        <button type="button" className="life-toggle" onClick={() => { if (window.confirm('Clear the activity history?')) clearActivity(); }}>
+                        <button type="button" className="life-toggle" onClick={() => { ask({
+                                title: 'Clear the activity history?',
+                                message: `All ${activity.length} activity ${activity.length === 1 ? 'entry' : 'entries'} on this page are removed. Journal entries and life events are not affected.`,
+                                confirmLabel: 'Clear history',
+                            }).then(ok => { if (ok) clearActivity(); }); }}>
                             <Trash2 size={13} /> Clear history
                         </button>
                     </div>
                 )}
             </div>
 
-            {tab === 'events' && (
-                <div className="life-chip-row">
-                    <Chip label="All" active={category === 'All'} count={catCounts.All} onClick={() => setCategory('All')} tint="#a89f94" />
-                    {pool.map(c => (
-                        <Chip key={c} label={c} active={category === c} count={catCounts[c]} onClick={() => setCategory(c)} />
-                    ))}
-                    <button type="button" className="life-chip is-manage" onClick={() => setManageCats(true)} title="Add, rename or delete categories">
-                        <SlidersHorizontal size={13} /><span>Manage</span>
-                    </button>
-                </div>
-            )}
-
+            <div className="panel life-panel">
+            <div className="life-scroll">
             {tab === 'events' ? (
                 visible.length === 0 ? (
                     <EmptyState
@@ -400,18 +431,6 @@ export default function JournalPage() {
                 )
             ) : (
                 <>
-                    <div className="life-chip-row">
-                        {['all', 'money', 'notes', 'tasks', 'system', 'account'].map(id => (
-                            <Chip
-                                key={id}
-                                label={id === 'all' ? 'All activity' : id.charAt(0).toUpperCase() + id.slice(1)}
-                                active={typeFilter === id}
-                                onClick={() => setTypeFilter(id)}
-                                tint={id === 'all' ? '#a89f94' : activityMeta(id === 'money' ? 'money' : id === 'account' ? 'auth' : id.slice(0, -1)).tint}
-                                dot={id !== 'all'}
-                            />
-                        ))}
-                    </div>
                     {activityDays.length === 0 ? (
                         <EmptyState icon={Activity} title="No activity yet" hint="Actions across Nirvaah will appear here as they happen." />
                     ) : (
@@ -439,6 +458,8 @@ export default function JournalPage() {
                     )}
                 </>
             )}
+            </div>
+            </div>
 
             {editing && (
                 <EventEditor

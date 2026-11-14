@@ -8,6 +8,8 @@ import {
     isOverdue, monthKey, TASKS_KEY, PRIORITIES, priorityMeta, tintOf, categoryPool, useCategories,
 } from './store';
 import { PageHero, StatTile, Chip, Segmented, EmptyState, Progress, CategoryManager, Select } from './ui';
+import { useConfirm } from '../ConfirmDialog';
+import { parseDateOnly } from '../dates';
 
 const VIEWS = [
     { id: 'open', label: 'Open' },
@@ -101,6 +103,19 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
             >
                 {task.done && <Check size={12} strokeWidth={3} />}
             </button>
+            {task.due && (() => {
+                const day = parseDateOnly(task.due);
+                return (
+                    <span
+                        className={`journal-day${overdue ? ' is-overdue' : ''}`}
+                        style={{ '--chip': overdue ? '#d9534f' : tintOf(task.category) }}
+                        title={shortDay(task.due)}
+                    >
+                        <b>{day ? day.getDate() : '—'}</b>
+                        <small>{day ? day.toLocaleDateString('en-IN', { month: 'short' }) : ''}</small>
+                    </span>
+                );
+            })()}
             <div className="task-main" onClick={() => setEditing(true)} role="button" tabIndex={0}
                 onKeyDown={e => { if (e.key === 'Enter') setEditing(true); }}>
                 <span className="task-text">{task.text}</span>
@@ -110,12 +125,7 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
                             <i />{task.category}
                         </span>
                     )}
-                    {task.due && (
-                        <span className={`task-due${overdue ? ' is-overdue' : ''}`}>
-                            <CalendarDays size={11} /> {shortDay(task.due)}
-                            {overdue && ' · overdue'}
-                        </span>
-                    )}
+                    {overdue && <span className="task-due is-overdue">overdue</span>}
                     {task.notes && <span className="task-note-dot" title={task.notes}><StickyNote size={11} /></span>}
                     <span className="task-age">{timeAgo(task.createdAt)}</span>
                 </div>
@@ -241,6 +251,8 @@ function ProjectPanel({
 }
 
 export default function TasksPage() {
+    // Destructive actions ask through the app's own dialog, never confirm().
+    const { ask, dialog } = useConfirm();
     const [tasks, setTasks] = useCollection(TASKS_KEY);
     const [view, setView] = useState('open');
     const [category, setCategory] = useState('All');
@@ -354,14 +366,26 @@ export default function TasksPage() {
         logActivity(`Task updated: “${next.text}”`, 'task');
     };
 
-    const remove = task => {
+    const remove = async task => {
+        const ok = await ask({
+            title: `Delete “${task.text}”?`,
+            message: 'The task and its completion state are removed. This cannot be undone.',
+            confirmLabel: 'Delete task',
+        });
+        if (!ok) return;
         setTasks(prev => prev.filter(x => x.id !== task.id));
         logActivity(`Task deleted: “${task.text}”`, 'task');
     };
 
-    const clearDone = () => {
+    const clearDone = async () => {
         const count = tasks.filter(x => x.done).length;
         if (!count) return;
+        const ok = await ask({
+            title: `Clear ${count} completed task${count === 1 ? '' : 's'}?`,
+            message: 'Only finished tasks are removed. Open tasks stay where they are.',
+            confirmLabel: 'Clear completed',
+        });
+        if (!ok) return;
         setTasks(prev => prev.filter(x => !x.done));
         logActivity(`Cleared ${count} completed task${count === 1 ? '' : 's'}`, 'task');
     };
@@ -424,8 +448,14 @@ export default function TasksPage() {
         logActivity(`Task added: “${text}”`, 'task', category);
     };
 
-    const deleteProject = () => {
+    const deleteProject = async () => {
         const doomed = tasks.filter(x => x.category === category);
+        const ok = await ask({
+            title: `Delete the “${category}” project?`,
+            message: `${doomed.length} task${doomed.length === 1 ? '' : 's'} and the category itself are removed for good. This cannot be undone.`,
+            confirmLabel: 'Delete project',
+        });
+        if (!ok) return;
         setTasks(prev => prev.filter(x => x.category !== category));
         setCats(prev => prev.filter(c => c !== category));
         logActivity(`Project deleted: ${category} (${doomed.length} task${doomed.length === 1 ? '' : 's'})`, 'task');
@@ -435,8 +465,24 @@ export default function TasksPage() {
     const progress = stats.total ? Math.round(((stats.total - stats.open) / stats.total) * 100) : 0;
     const dueThisWeek = tasks.filter(x => !x.done && x.due && x.due >= t && x.due <= weekAhead).length;
 
+    const categoryChips = (
+        <div className="life-chip-row">
+            <Chip label="All" active={category === 'All'} count={catCounts.All} onClick={() => setCategory('All')} tint="#a89f94" />
+            {pool.map(c => (
+                <Chip key={c} label={c} active={category === c} count={catCounts[c]} onClick={() => setCategory(c)} />
+            ))}
+        </div>
+    );
+
+    const manageCategories = (
+        <button type="button" className="life-chip is-manage" onClick={() => setManageCats(true)} title="Add, rename or delete categories">
+            <SlidersHorizontal size={13} /><span>Manage</span>
+        </button>
+    );
+
     return (
         <div className="life-page tasks-page">
+            {dialog}
             <PageHero
                 title={isProject ? category : undefined}
                 description={isProject
@@ -500,6 +546,8 @@ export default function TasksPage() {
                     value={view}
                     onChange={setView}
                 />
+                {categoryChips}
+                {manageCategories}
                 <div className="life-toolbar-right">
                     <Select
                         compact
@@ -513,15 +561,12 @@ export default function TasksPage() {
             </div>}
 
             <div className="task-progress-row">
-                <div className="life-chip-row">
-                    <Chip label="All" active={category === 'All'} count={catCounts.All} onClick={() => setCategory('All')} tint="#a89f94" />
-                    {pool.map(c => (
-                        <Chip key={c} label={c} active={category === c} count={catCounts[c]} onClick={() => setCategory(c)} />
-                    ))}
-                    <button type="button" className="life-chip is-manage" onClick={() => setManageCats(true)} title="Add, rename or delete categories">
-                        <SlidersHorizontal size={13} /><span>Manage</span>
-                    </button>
-                </div>
+                {isProject && (
+                    <>
+                        {categoryChips}
+                        {manageCategories}
+                    </>
+                )}
                 {!isProject && (
                     <div className="task-progress">
                         <span>{stats.total - stats.open} of {stats.total} done</span>
@@ -530,6 +575,8 @@ export default function TasksPage() {
                 )}
             </div>
 
+            <div className="panel life-panel">
+            <div className="life-scroll">
             {isProject ? (
                 <ProjectPanel
                     name={category}
@@ -592,6 +639,8 @@ export default function TasksPage() {
                     )}
                 </div>
             )}
+            </div>
+            </div>
 
             <CategoryManager
                 open={manageCats}
