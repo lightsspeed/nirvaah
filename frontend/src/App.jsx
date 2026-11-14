@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useConfirm } from './ConfirmDialog';
 import axios from 'axios';
 import {
     LayoutDashboard, ArrowLeftRight, Wallet, Target, TrendingUp, CreditCard,
@@ -933,6 +934,8 @@ function DateRangeFilter({ range, onChange, txRange }) {
 // ── Main Application Component ───────────────────────────────────────────────
 export default function App() {
     const [token, setToken] = useState(localStorage.getItem('moneta_token') || '');
+    // One designed dialog for every destructive action (no browser confirm()).
+    const { ask, dialog } = useConfirm();
     const [user, setUser] = useState(null);
 
     // Two devices, one truth: poll a record fingerprint and re-hydrate on change.
@@ -1306,7 +1309,13 @@ export default function App() {
         logActivity(`Added category: "${trimmed}" (Expense)`, 'system');
     };
 
-    const handleRemoveExpenseCat = name => {
+    const handleRemoveExpenseCat = async name => {
+        const ok = await ask({
+            title: `Remove the “${name}” category?`,
+            message: 'It disappears from the expense list. Entries already saved keep their label.',
+            confirmLabel: 'Remove',
+        });
+        if (!ok) return;
         setExpenseCats(prev => prev.filter(c => c !== name));
         logActivity(`Removed category: "${name}"`, 'system');
     };
@@ -1318,7 +1327,13 @@ export default function App() {
         logActivity(`Added category: "${trimmed}" (Income)`, 'system');
     };
 
-    const handleRemoveIncomeCat = name => {
+    const handleRemoveIncomeCat = async name => {
+        const ok = await ask({
+            title: `Remove the “${name}” category?`,
+            message: 'It disappears from the income list. Entries already saved keep their label.',
+            confirmLabel: 'Remove',
+        });
+        if (!ok) return;
         setIncomeCats(prev => prev.filter(c => c !== name));
         logActivity(`Removed category: "${name}"`, 'system');
     };
@@ -1330,18 +1345,29 @@ export default function App() {
         logActivity(`Added payment method: "${trimmed}"`, 'system');
     };
 
-    const handleRemovePaymentMethod = name => {
+    const handleRemovePaymentMethod = async name => {
+        const ok = await ask({
+            title: `Remove “${name}”?`,
+            message: 'It disappears from the payment method list. Entries already saved keep their label.',
+            confirmLabel: 'Remove',
+        });
+        if (!ok) return;
         setPaymentMethods(prev => prev.filter(m => m !== name));
         logActivity(`Removed payment method: "${name}"`, 'system');
     };
 
-    const handleResetDefaults = () => {
-        if (confirm('Reset categories and payment methods to default?')) {
-            setExpenseCats(DEFAULT_EXPENSE_CATS);
-            setIncomeCats(DEFAULT_INCOME_CATS);
-            setPaymentMethods(DEFAULT_PAYMENT_METHODS);
-            logActivity('Reset categories & payment methods to defaults', 'system');
-        }
+    const handleResetDefaults = async () => {
+        const ok = await ask({
+            title: 'Reset categories and payment methods?',
+            message: 'Your custom categories and payment methods are replaced with the defaults. Records already saved keep their current labels.',
+            confirmLabel: 'Reset',
+            tone: 'info',
+        });
+        if (!ok) return;
+        setExpenseCats(DEFAULT_EXPENSE_CATS);
+        setIncomeCats(DEFAULT_INCOME_CATS);
+        setPaymentMethods(DEFAULT_PAYMENT_METHODS);
+        logActivity('Reset categories & payment methods to defaults', 'system');
     };
 
     useEffect(() => {
@@ -1512,8 +1538,22 @@ export default function App() {
         }
     };
 
-    const del = async (path, id) => {
-        if (!confirm('Delete this record?')) return;
+    const RECORD_LABELS = {
+        transactions: { one: 'transaction', many: 'Transactions' },
+        budgets: { one: 'budget', many: 'Budgets' },
+        goals: { one: 'savings goal', many: 'Savings goals' },
+        investments: { one: 'investment', many: 'Investments' },
+        liabilities: { one: 'liability', many: 'Liabilities' },
+    };
+
+    const del = async (path, id, label) => {
+        const kind = RECORD_LABELS[path]?.one || 'record';
+        const ok = await ask({
+            title: `Delete this ${label || kind}?`,
+            message: `This removes it from ${RECORD_LABELS[path]?.many || 'Nirvaah'} permanently. It cannot be undone.`,
+            confirmLabel: 'Delete',
+        });
+        if (!ok) return;
         try {
             await api.delete(`/${path}/${id}`);
             load();
@@ -3031,6 +3071,9 @@ export default function App() {
                     <span className="app-version">v{typeof __APP_VERSION__ === 'undefined' ? '1.0.0' : __APP_VERSION__}</span>
                 </footer>
             </main>
+
+            {/* Confirmation dialog for every delete / destructive reset. */}
+            {dialog}
 
             {/* ── Modal Dialog with Segmented Type & Custom Dropdowns ────────────── */}
             {modal && page !== 'Transactions' && (
