@@ -1,0 +1,55 @@
+# Production overlay: adds TLS termination and stops the stack's ports from
+# being reachable from the internet except through Caddy.
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+#
+# Requires Compose >= 2.24 for the !override tag. The base file still works
+# unchanged for local development.
+
+services:
+  frontend:
+    # The frontend is versioned independently of the API so a UI-only change
+    # does not require rebuilding the backend image.
+    image: ${DOCKER_NAMESPACE:-lightsspeed}/nirvaah-frontend:${FRONTEND_TAG:-1.1.1}
+    # The base file publishes 3001:8080 on every interface. Keep the port for
+    # local debugging but bind it to loopback only; Caddy reaches frontend:8080
+    # over the compose network.
+    ports: !override
+      - "127.0.0.1:3001:8080"
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_HOST: ${APP_HOST:?APP_HOST must be set (e.g. nirvaah.example.com)}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - app
+    depends_on:
+      frontend:
+        condition: service_started
+    mem_limit: 128m
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+volumes:
+  caddy_data:
+  caddy_config:

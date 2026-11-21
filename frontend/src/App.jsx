@@ -999,6 +999,16 @@ export default function App() {
     const [filterKind, setFilterKind] = useState('All');
     const [filterCategory, setFilterCategory] = useState('All');
     const [search, setSearch] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
+
+    // The phone header shows only a magnifier; tapping it opens a focused
+    // search bar. Escape closes it.
+    useEffect(() => {
+        if (!searchOpen) return undefined;
+        const onKey = e => { if (e.key === 'Escape') setSearchOpen(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [searchOpen]);
 
     // ── Light / Dark / System Theme (Clickable - no dropdown) ───────────────────
     const [theme, setTheme] = useState(() => {
@@ -1241,6 +1251,8 @@ export default function App() {
     };
 
     // ── Edit Transaction state & handlers ───────────────────────────────────────
+    // Editing is inline only: the pencil puts that row into edit mode, so there
+    // is exactly one draft record and never an overlay.
     const [editingTx, setEditingTx] = useState(null);
     const [editBusy, setEditBusy] = useState(false);
     const [editError, setEditError] = useState('');
@@ -1258,8 +1270,20 @@ export default function App() {
         });
     };
 
-    const handleSaveEditTx = async e => {
-        if (e) e.preventDefault();
+    const cancelEditTx = () => {
+        setEditingTx(null);
+        setEditError('');
+    };
+
+    // Double-clicking a row opens its inline editor. The row's own buttons keep
+    // their single-click behaviour, so a double click on delete can't fall
+    // through to an edit.
+    const rowEditHandler = t => e => {
+        if (e.target.closest('button')) return;
+        openEditTx(t);
+    };
+
+    const handleSaveEditTx = async () => {
         if (!editingTx) return;
         const amt = Number(editingTx.amount);
         if (!editingTx.amount || isNaN(amt) || amt <= 0) {
@@ -1699,7 +1723,18 @@ export default function App() {
                 <div className="profile">
                     <div className="avatar">{(user?.name || 'M')[0].toUpperCase()}</div>
                     <div><b>{user?.name || 'My account'}</b><small>{user?.email}</small></div>
-                    <button onClick={logout} title="Sign out"><LogOut size={16} /></button>
+                    <div className="profile-actions">
+                        <button
+                            type="button"
+                            className="theme-btn-sidebar"
+                            onClick={() => setTheme(prev => prev === 'light' ? 'dark' : prev === 'dark' ? 'system' : 'light')}
+                            title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)} (Click to toggle)`}
+                            aria-label="Toggle color theme"
+                        >
+                            {theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Laptop size={16} />}
+                        </button>
+                        <button onClick={logout} title="Sign out"><LogOut size={16} /></button>
+                    </div>
                 </div>
             </aside>
             {mobile && <div className="scrim" onClick={() => setMobile(false)} />}
@@ -1727,32 +1762,59 @@ export default function App() {
                         </p>
                     </div>
 
-                    {/* Floating search — searches every record type */}
-                    <div className="topbar-search">
+                    {/* Floating search — a magnifier on phones, the full field
+                        on wider screens. */}
+                    <div
+                        className={`topbar-search${searchOpen ? ' is-open' : ''}`}
+                        onMouseDown={e => { if (e.target === e.currentTarget) setSearchOpen(false); }}
+                    >
+                        <button
+                            type="button"
+                            className="search-trigger"
+                            onClick={() => setSearchOpen(true)}
+                            aria-label="Search the workspace"
+                            aria-expanded={searchOpen}
+                        >
+                            <Search size={18} />
+                        </button>
                         <GlobalSearch
                             query={search}
                             onQuery={setSearch}
                             groups={searchResults}
-                            onPick={pickSearchResult}
+                            onPick={item => { pickSearchResult(item); setSearchOpen(false); }}
+                            expanded={searchOpen}
+                            onClose={() => setSearchOpen(false)}
                         />
-                        <button
-                            type="button"
-                            className="theme-btn-single"
-                            onClick={() => setTheme(prev => prev === 'light' ? 'dark' : prev === 'dark' ? 'system' : 'light')}
-                            title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)} (Click to toggle)`}
-                            aria-label="Toggle color theme"
-                        >
-                            {theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Laptop size={16} />}
-                        </button>
+                        {searchOpen ? (
+                            <button
+                                type="button"
+                                className="search-close"
+                                onClick={() => setSearchOpen(false)}
+                                aria-label="Close search"
+                            >
+                                <X size={18} />
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                className="theme-btn-single"
+                                onClick={() => setTheme(prev => prev === 'light' ? 'dark' : prev === 'dark' ? 'system' : 'light')}
+                                title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)} (Click to toggle)`}
+                                aria-label="Toggle color theme"
+                            >
+                                {theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Laptop size={16} />}
+                            </button>
+                        )}
                     </div>
 
-                    {/* Page actions, right of the search */}
-                    <div className="header-slot header-actions">
+                    {/* Page actions, right of the search; life pages portal their
+                        hero action into this slot on phones. */}
+                    <div className="header-slot header-actions" id="page-header-actions">
                         {page !== 'Dashboard' && page !== 'Reports' && page !== 'Assistant'
                             && page !== 'Transactions' && !['Notes', 'Tasks', 'Journal'].includes(page) && (
-                            <button className="blue" onClick={add}>
+                            <button className="blue" onClick={add} aria-label={`Add ${singularPage(page)}`}>
                                 <Plus size={15} />
-                                Add {singularPage(page)}
+                                <span className="btn-label">Add {singularPage(page)}</span>
                             </button>
                         )}
                     </div>
@@ -1970,28 +2032,44 @@ export default function App() {
                                 </div>
                                 <div className="table-head"><span>DESCRIPTION</span><span>AMOUNT</span><span>METHOD</span></div>
                                 {data.recent_transactions.length ? data.recent_transactions.slice(0, 5).map((t, i) => (
-                                    <div className="mini-tx" key={t.id}>
-                                        <div className="merchant">
-                                            <i className={`merchant-icon m${i % 5}`}>{t.category.slice(0, 1)}</i>
-                                            <span><b>{t.description || t.category}</b><small>{t.category}</small></span>
+                                    editingTx && editingTx.id === t.id ? (
+                                        <InlineTxEditor
+                                            key={t.id}
+                                            variant="strip"
+                                            tx={editingTx}
+                                            setTx={setEditingTx}
+                                            onSave={handleSaveEditTx}
+                                            onCancel={cancelEditTx}
+                                            busy={editBusy}
+                                            error={editError}
+                                            expenseCats={expenseCats}
+                                            incomeCats={incomeCats}
+                                            paymentMethods={paymentMethods}
+                                        />
+                                    ) : (
+                                        <div className="mini-tx" key={t.id} onDoubleClick={rowEditHandler(t)}>
+                                            <div className="merchant">
+                                                <i className={`merchant-icon m${i % 5}`}>{t.category.slice(0, 1)}</i>
+                                                <span><b>{t.description || t.category}</b><small>{t.category}</small></span>
+                                            </div>
+                                            <b className={`mini-amount ${t.kind === 'income' ? 'green' : 'red-text'}`}>
+                                                {t.kind === 'income' ? '+' : '−'}{money(t.amount)}
+                                            </b>
+                                            <div className="mini-method">
+                                                <span className="pay-badge-colored" style={getPaymentStyle(t.payment_method)}>
+                                                    {t.payment_method}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    className="icon-btn edit-btn mini-edit-btn"
+                                                    onClick={() => openEditTx(t)}
+                                                    title="Edit transaction"
+                                                >
+                                                    <Pencil size={12} />
+                                                </button>
+                                            </div>
                                         </div>
-                                        <b className={`mini-amount ${t.kind === 'income' ? 'green' : 'red-text'}`}>
-                                            {t.kind === 'income' ? '+' : '−'}{money(t.amount)}
-                                        </b>
-                                        <div className="mini-method">
-                                            <span className="pay-badge-colored" style={getPaymentStyle(t.payment_method)}>
-                                                {t.payment_method}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                className="icon-btn edit-btn mini-edit-btn"
-                                                onClick={() => openEditTx(t)}
-                                                title="Edit transaction"
-                                            >
-                                                <Pencil size={12} />
-                                            </button>
-                                        </div>
-                                    </div>
+                                    )
                                 )) : <div className="empty">
                                     <b>Nothing in this range</b>
                                     <span>Try a wider date range, or add a transaction.</span>
@@ -2194,7 +2272,22 @@ export default function App() {
                                     </thead>
                                     <tbody>
                                         {filteredTx.length ? filteredTx.map(t => (
-                                            <tr key={t.id}>
+                                            editingTx && editingTx.id === t.id ? (
+                                                <InlineTxEditor
+                                                    key={t.id}
+                                                    variant="row"
+                                                    tx={editingTx}
+                                                    setTx={setEditingTx}
+                                                    onSave={handleSaveEditTx}
+                                                    onCancel={cancelEditTx}
+                                                    busy={editBusy}
+                                                    error={editError}
+                                                    expenseCats={expenseCats}
+                                                    incomeCats={incomeCats}
+                                                    paymentMethods={paymentMethods}
+                                                />
+                                            ) : (
+                                            <tr key={t.id} onDoubleClick={rowEditHandler(t)}>
                                                 <td><b>{t.description || t.category}</b></td>
                                                 <td>
                                                     <span className="cat-badge-colored" style={getCategoryStyle(t.category)}>
@@ -2233,6 +2326,7 @@ export default function App() {
                                                     </div>
                                                 </td>
                                             </tr>
+                                            )
                                         )) : (
                                             <tr>
                                                 <td colSpan={6}>
@@ -3131,6 +3225,15 @@ export default function App() {
                     getPaymentStyle={getPaymentStyle}
                     onEditTx={openEditTx}
                     onDeleteTx={id => del('transactions', id)}
+                    editingTx={editingTx}
+                    setEditingTx={setEditingTx}
+                    onSaveTx={handleSaveEditTx}
+                    onCancelTx={cancelEditTx}
+                    editBusy={editBusy}
+                    editError={editError}
+                    expenseCats={expenseCats}
+                    incomeCats={incomeCats}
+                    paymentMethods={paymentMethods}
                 />
             )}
 
@@ -3154,24 +3257,18 @@ export default function App() {
                     getPaymentStyle={getPaymentStyle}
                     onEditTx={openEditTx}
                     onDeleteTx={id => del('transactions', id)}
-                />
-            )}
-
-            {/* ── Edit Transaction Modal ────────────────────────────────────── */}
-            {editingTx && (
-                <EditTransactionModal
-                    tx={editingTx}
-                    setTx={setEditingTx}
-                    onSave={handleSaveEditTx}
-                    onClose={() => setEditingTx(null)}
-                    busy={editBusy}
-                    error={editError}
+                    editingTx={editingTx}
+                    setEditingTx={setEditingTx}
+                    onSaveTx={handleSaveEditTx}
+                    onCancelTx={cancelEditTx}
+                    editBusy={editBusy}
+                    editError={editError}
                     expenseCats={expenseCats}
                     incomeCats={incomeCats}
                     paymentMethods={paymentMethods}
-                    onOpenManage={setManageModal}
                 />
             )}
+
         </div>
         </>
     );
@@ -3583,6 +3680,15 @@ function CategoryDrilldownModal({
     getPaymentStyle,
     onEditTx,
     onDeleteTx,
+    editingTx,
+    setEditingTx,
+    onSaveTx,
+    onCancelTx,
+    editBusy,
+    editError,
+    expenseCats = [],
+    incomeCats = [],
+    paymentMethods = [],
 }) {
     const isPayment = type === 'payment';
     const expTxns = useMemo(() => transactions.filter(t => t.kind === 'expense'), [transactions]);
@@ -3728,7 +3834,29 @@ function CategoryDrilldownModal({
                         </thead>
                         <tbody>
                             {transactions.length ? transactions.map(t => (
-                                <tr key={t.id}>
+                                editingTx && editingTx.id === t.id ? (
+                                    <InlineTxEditor
+                                        key={t.id}
+                                        variant="drilldown"
+                                        isPayment={isPayment}
+                                        tx={editingTx}
+                                        setTx={setEditingTx}
+                                        onSave={onSaveTx}
+                                        onCancel={onCancelTx}
+                                        busy={editBusy}
+                                        error={editError}
+                                        expenseCats={expenseCats}
+                                        incomeCats={incomeCats}
+                                        paymentMethods={paymentMethods}
+                                    />
+                                ) : (
+                                <tr
+                                    key={t.id}
+                                    onDoubleClick={e => {
+                                        if (!onEditTx || e.target.closest('button')) return;
+                                        onEditTx(t);
+                                    }}
+                                >
                                     <td><b>{t.description || t.category}</b></td>
                                     <td>
                                         {new Date(t.txn_date + 'T00:00:00').toLocaleDateString('en-IN', {
@@ -3776,6 +3904,7 @@ function CategoryDrilldownModal({
                                         </div>
                                     </td>
                                 </tr>
+                                )
                             )) : (
                                 <tr>
                                     <td colSpan={5}>
@@ -3800,160 +3929,249 @@ function CategoryDrilldownModal({
     );
 }
 
-// ── Dedicated Edit Transaction Modal ──────────────────────────────────────────
-function EditTransactionModal({
+// ── Inline transaction editor ────────────────────────────────────────────────
+// Editing happens where the record already sits — no overlay, no second copy of
+// the form. `variant` picks the host markup:
+//   'row'       → the six cells of a Transactions table row
+//   'drilldown' → the five cells of a drilldown modal row
+//   'strip'     → the compact strip inside the dashboard's Recent activity card
+// Enter saves, Escape cancels.
+function InlineTxEditor({
     tx,
     setTx,
     onSave,
-    onClose,
-    busy,
-    error,
-    expenseCats,
-    incomeCats,
-    paymentMethods,
-    onOpenManage,
+    onCancel,
+    busy = false,
+    error = '',
+    expenseCats = [],
+    incomeCats = [],
+    paymentMethods = [],
+    variant = 'row',
+    isPayment = false,
 }) {
     const amountRef = useRef(null);
 
     useEffect(() => {
-        setTimeout(() => amountRef.current?.focus(), 80);
-        const onEsc = e => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onEsc);
-        return () => window.removeEventListener('keydown', onEsc);
-    }, [onClose]);
+        const id = setTimeout(() => {
+            amountRef.current?.focus();
+            amountRef.current?.select?.();
+        }, 40);
+        return () => clearTimeout(id);
+    }, []);
 
-    const catOptions = tx.kind === 'income' ? incomeCats : expenseCats;
-    const setField = (k, v) => setTx(prev => ({ ...prev, [k]: v }));
+    const cats = tx.kind === 'income' ? incomeCats : expenseCats;
+    const set = (k, v) => setTx(prev => ({ ...prev, [k]: v }));
+    const setKind = kind => setTx(prev => {
+        const pool = kind === 'income' ? incomeCats : expenseCats;
+        return { ...prev, kind, category: pool.includes(prev.category) ? prev.category : (pool[0] || '') };
+    });
+
+    const onKeyDown = e => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (tx.amount) onSave();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+        }
+    };
+
+    const amountInput = (
+        <input
+            ref={amountRef}
+            type="number"
+            step="any"
+            min="0.01"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={tx.amount ?? ''}
+            onChange={e => set('amount', e.target.value)}
+        />
+    );
+
+    const kindButton = (
+        <button
+            type="button"
+            className={`tx-inline-kind ${tx.kind === 'income' ? 'is-inc' : 'is-exp'}`}
+            onClick={() => setKind(tx.kind === 'income' ? 'expense' : 'income')}
+            title={`Switch to ${tx.kind === 'income' ? 'expense' : 'income'}`}
+        >
+            {tx.kind === 'income' ? <ArrowDownLeft size={13} /> : <ArrowUpRight size={13} />}
+        </button>
+    );
+
+    const descInput = (
+        <input
+            type="text"
+            placeholder={tx.category || 'Description'}
+            value={tx.description ?? ''}
+            onChange={e => set('description', e.target.value)}
+        />
+    );
+
+    const dateInput = (
+        <input
+            type="date"
+            value={tx.txn_date || today()}
+            onChange={e => set('txn_date', e.target.value)}
+        />
+    );
+
+    const categorySelect = (
+        <CustomSelect
+            value={cats.includes(tx.category) ? tx.category : (cats[0] || '')}
+            onChange={v => set('category', v)}
+            options={cats}
+            placeholder="Category"
+            fullWidth
+        />
+    );
+
+    const paymentSelect = (
+        <CustomSelect
+            value={paymentMethods.includes(tx.payment_method) ? tx.payment_method : (paymentMethods[0] || '')}
+            onChange={v => set('payment_method', v)}
+            options={paymentMethods}
+            placeholder="Payment"
+            fullWidth
+        />
+    );
+
+    const rowActions = (
+        <div className="row-actions">
+            <button
+                type="button"
+                className="icon-btn save-btn"
+                onClick={onSave}
+                disabled={busy || !tx.amount}
+                title="Save changes (Enter)"
+            >
+                <Check size={13} />
+            </button>
+            <button
+                type="button"
+                className="icon-btn"
+                onClick={onCancel}
+                disabled={busy}
+                title="Cancel (Esc)"
+            >
+                <X size={13} />
+            </button>
+        </div>
+    );
+
+    if (variant === 'strip') {
+        return (
+            <div className="mini-tx is-editing">
+                <form
+                    className="inline-tx-form-compact tx-inline-strip"
+                    onSubmit={e => { e.preventDefault(); onSave(); }}
+                    onKeyDown={e => {
+                        if (e.key === 'Escape') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onCancel();
+                        }
+                    }}
+                >
+                    <div className="min-type-toggle">
+                        <button
+                            type="button"
+                            className={`min-type-btn ${tx.kind === 'expense' ? 'is-exp' : ''}`}
+                            onClick={() => setKind('expense')}
+                        >
+                            <ArrowUpRight size={13} /><span>Expense</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`min-type-btn ${tx.kind === 'income' ? 'is-inc' : ''}`}
+                            onClick={() => setKind('income')}
+                        >
+                            <ArrowDownLeft size={13} /><span>Income</span>
+                        </button>
+                    </div>
+
+                    <div className="min-field field-amount">
+                        <span className="min-curr">₹</span>
+                        {amountInput}
+                    </div>
+
+                    <div className="min-field field-category">{categorySelect}</div>
+
+                    <div className="min-field field-desc">{descInput}</div>
+
+                    <div className="min-field field-payment">{paymentSelect}</div>
+
+                    <div className="min-field field-date">{dateInput}</div>
+
+                    <button
+                        type="submit"
+                        className="blue min-save-btn"
+                        disabled={busy || !tx.amount}
+                        title="Save changes (Enter)"
+                    >
+                        <Check size={14} />
+                        <span>{busy ? '…' : 'Save'}</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        className="ghost min-cancel-btn"
+                        onClick={onCancel}
+                        disabled={busy}
+                        title="Cancel (Esc)"
+                    >
+                        <X size={14} />
+                        <span>Cancel</span>
+                    </button>
+
+                    {error && <div className="inline-tx-error compact-error">{error}</div>}
+                </form>
+            </div>
+        );
+    }
+
+    const amountCell = (
+        <td className="tx-inline-cell tx-inline-amount-cell">
+            <div className="tx-inline-amount">
+                {kindButton}
+                {amountInput}
+            </div>
+        </td>
+    );
 
     return (
-        <div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-            <form className="modal edit-modal" onSubmit={onSave} style={{ maxWidth: '480px' }}>
-                <div className="modal-head">
-                    <div>
-                        <small style={{ letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                            TRANSACTION MANAGEMENT
-                        </small>
-                        <h2 style={{ fontSize: '20px', margin: '4px 0 0 0' }}>Edit Transaction</h2>
-                    </div>
-                    <button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button>
-                </div>
-
-                <div className="form-group">
-                    <span className="form-label">Transaction Type</span>
-                    <div className="type-toggle">
-                        <button
-                            type="button"
-                            className={`type-btn ${tx.kind === 'expense' ? 'active is-expense' : ''}`}
-                            onClick={() => {
-                                setTx(prev => ({
-                                    ...prev,
-                                    kind: 'expense',
-                                    category: expenseCats.includes(prev.category) ? prev.category : (expenseCats[0] || 'Groceries')
-                                }));
-                            }}
-                        >
-                            <ArrowUpRight size={16} /> Expense
-                        </button>
-                        <button
-                            type="button"
-                            className={`type-btn ${tx.kind === 'income' ? 'active is-income' : ''}`}
-                            onClick={() => {
-                                setTx(prev => ({
-                                    ...prev,
-                                    kind: 'income',
-                                    category: incomeCats.includes(prev.category) ? prev.category : (incomeCats[0] || 'Salary')
-                                }));
-                            }}
-                        >
-                            <ArrowDownLeft size={16} /> Income
-                        </button>
-                    </div>
-                </div>
-
-                <div className="form-group">
-                    <span className="form-label">Amount (₹)*</span>
-                    <input
-                        ref={amountRef}
-                        required
-                        type="number"
-                        step="any"
-                        min="0.01"
-                        placeholder="0.00"
-                        value={tx.amount ?? ''}
-                        onChange={e => setField('amount', e.target.value)}
-                    />
-                </div>
-
-                <div className="form-group">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span className="form-label">Category*</span>
-                        <button
-                            type="button"
-                            className="link"
-                            style={{ fontSize: '11px', textDecoration: 'none' }}
-                            onClick={() => onOpenManage(tx.kind === 'income' ? 'income' : 'expense')}
-                        >
-                            + Manage
-                        </button>
-                    </div>
-                    <CustomSelect
-                        value={tx.category && catOptions.includes(tx.category) ? tx.category : (catOptions[0] || '')}
-                        onChange={v => setField('category', v)}
-                        options={catOptions}
-                        fullWidth
-                    />
-                </div>
-
-                <div className="form-group">
-                    <span className="form-label">Description</span>
-                    <input
-                        type="text"
-                        placeholder="e.g. Grocery store, Netflix, Uber, Salary…"
-                        value={tx.description ?? ''}
-                        onChange={e => setField('description', e.target.value)}
-                    />
-                </div>
-
-                <div className="form-group">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span className="form-label">Payment method*</span>
-                        <button
-                            type="button"
-                            className="link"
-                            style={{ fontSize: '11px', textDecoration: 'none' }}
-                            onClick={() => onOpenManage('payment')}
-                        >
-                            + Manage
-                        </button>
-                    </div>
-                    <CustomSelect
-                        value={tx.payment_method && paymentMethods.includes(tx.payment_method) ? tx.payment_method : (paymentMethods[0] || 'SBI')}
-                        onChange={v => setField('payment_method', v)}
-                        options={paymentMethods}
-                        fullWidth
-                        dropUp={true}
-                    />
-                </div>
-
-                <div className="form-group">
-                    <span className="form-label">Date*</span>
-                    <input
-                        required
-                        type="date"
-                        value={tx.txn_date ?? today()}
-                        onChange={e => setField('txn_date', e.target.value)}
-                    />
-                </div>
-
-                {error && <div className="inline-tx-error" style={{ marginBottom: 16 }}>{error}</div>}
-
-                <div className="modal-foot">
-                    <button type="button" className="ghost" onClick={onClose} disabled={busy}>Cancel</button>
-                    <button type="submit" className="blue" disabled={busy || !tx.amount}>
-                        {busy ? 'Saving changes…' : 'Save Changes'}
-                    </button>
-                </div>
-            </form>
-        </div>
+        <>
+            <tr
+                className={`tx-inline-row ${variant === 'drilldown' ? 'is-drilldown' : ''}`}
+                onKeyDown={onKeyDown}
+            >
+                <td className="tx-inline-cell tx-inline-desc">{descInput}</td>
+                {variant === 'drilldown' ? (
+                    <>
+                        <td className="tx-inline-cell tx-inline-date">{dateInput}</td>
+                        <td className={`tx-inline-cell ${isPayment ? 'tx-inline-cat' : 'tx-inline-pay'}`}>
+                            {isPayment ? categorySelect : paymentSelect}
+                        </td>
+                    </>
+                ) : (
+                    <>
+                        <td className="tx-inline-cell tx-inline-cat">{categorySelect}</td>
+                        <td className="tx-inline-cell tx-inline-date">{dateInput}</td>
+                        <td className="tx-inline-cell tx-inline-pay">{paymentSelect}</td>
+                    </>
+                )}
+                {amountCell}
+                <td className="tx-inline-actions">{rowActions}</td>
+            </tr>
+            {error && (
+                <tr className="tx-inline-error-row">
+                    <td colSpan={variant === 'drilldown' ? 5 : 6}>
+                        <div className="inline-tx-error">{error}</div>
+                    </td>
+                </tr>
+            )}
+        </>
     );
 }

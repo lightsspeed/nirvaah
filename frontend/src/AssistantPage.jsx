@@ -50,6 +50,9 @@ export default function AssistantPage({ api, user, onChanged }) {
     const bodyRef = useRef(null);
     const fieldRef = useRef(null);
 
+    // Phones show one pane at a time: the conversation list or the thread.
+    const isPhone = () => window.matchMedia('(max-width: 900px)').matches;
+
     const active = useMemo(() => conversations.find(c => c.id === activeId) || null, [conversations, activeId]);
 
     const refreshConversations = useCallback(async () => {
@@ -122,6 +125,7 @@ export default function AssistantPage({ api, user, onChanged }) {
         setConversations(prev => [conv, ...prev]);
         setActiveId(conv.id);
         setMessages([]);
+        if (isPhone()) setListOpen(false);
     };
 
     const removeConversation = async (id, e) => {
@@ -251,7 +255,10 @@ export default function AssistantPage({ api, user, onChanged }) {
                                 <button
                                     type="button"
                                     className={`ai-conv${conv.id === activeId ? ' is-active' : ''}`}
-                                    onClick={() => setActiveId(conv.id)}
+                                    onClick={() => {
+                                        setActiveId(conv.id);
+                                        if (isPhone()) setListOpen(false);
+                                    }}
                                 >
                                     <MessageSquare size={14} />
                                     <span>
@@ -306,6 +313,15 @@ export default function AssistantPage({ api, user, onChanged }) {
                             {active ? `${active.messages} messages` : 'Ask about your records, or tell me what to change'}
                         </small>
                     </div>
+                    <button
+                        type="button"
+                        className="ai-new-mini"
+                        onClick={startConversation}
+                        title="New conversation"
+                        aria-label="New conversation"
+                    >
+                        <Plus size={16} />
+                    </button>
                     <span className="ai-thread-tag">
                         <BrandAiIcon size={14} />
                         deepseek-flash

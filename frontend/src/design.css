@@ -6360,3 +6360,1424 @@ main > header .topbar-search {
   min-height: 0 !important;
   padding: 0 28px 0 12px !important;
 }
+
+/* ── Inline transaction editing ─────────────────────────────────────────────
+   The pencil puts the row itself into edit mode: the inputs sit in the same
+   cells as the values they replace, so an edit never opens an overlay. */
+.tx-inline-row > td {
+  padding-top: 7px !important;
+  padding-bottom: 7px !important;
+  vertical-align: middle;
+  background: var(--accent) !important;
+}
+
+/* Editing cells give their controls the room the display cells don't need. */
+.tx-inline-row .tx-inline-cell {
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+.tx-inline-row .tx-inline-cell:first-child {
+  padding-left: 4px !important;
+}
+
+.tx-inline-row input,
+.tx-inline-row .custom-select-trigger {
+  width: 100% !important;
+  min-width: 0;
+  height: var(--control-h-sm) !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.tx-inline-row input:focus,
+.tx-inline-row .custom-select-trigger:focus,
+.tx-inline-row .custom-select-trigger.active {
+  border-color: var(--ring) !important;
+  box-shadow: 0 0 0 2px var(--primary-ring) !important;
+}
+
+/* Date, payment and amount keep room for their editors; the description
+   column absorbs whatever is left. The category column stays wide enough for
+   its chip, which must not fall back to a cell ellipsis. */
+.transactions-scroll-container table th:nth-child(2),
+.transactions-scroll-container table td:nth-child(2) {
+  width: 122px;
+}
+
+.transactions-scroll-container table th:nth-child(3),
+.transactions-scroll-container table td:nth-child(3) {
+  width: 128px;
+}
+
+.transactions-scroll-container table th:nth-child(4),
+.transactions-scroll-container table td:nth-child(4) {
+  width: 92px;
+}
+
+.transactions-scroll-container table th:nth-child(5),
+.transactions-scroll-container table td:nth-child(5) {
+  width: 112px;
+}
+
+/* A chip never wraps onto a second line. */
+.cat-badge-colored,
+.pay-badge-colored {
+  white-space: nowrap;
+}
+
+.tx-inline-row input[type='date'] {
+  width: 116px !important;
+  min-width: 116px !important;
+  padding-right: 6px !important;
+}
+
+.tx-inline-row .tx-inline-amount-cell {
+  padding-right: 10px !important;
+}
+
+.tx-inline-row .tx-inline-actions {
+  width: 1%;
+  white-space: nowrap;
+  padding-left: 4px !important;
+  padding-right: 0 !important;
+}
+
+/* The arrow flips expense/income in place; the sign it carries is the only
+   colour cue the row needs. */
+.tx-inline-amount {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tx-inline-row .tx-inline-cat .custom-select-trigger,
+.tx-inline-row .tx-inline-pay .custom-select-trigger {
+  width: 100% !important;
+}
+
+.tx-inline-amount input {
+  flex: 1 1 auto;
+  width: 100% !important;
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* The native steppers eat a third of a narrow amount cell. */
+.tx-inline-amount input::-webkit-outer-spin-button,
+.tx-inline-amount input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.tx-inline-kind {
+  flex: 0 0 auto;
+  width: 26px;
+  height: var(--control-h-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--card) !important;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+
+.tx-inline-kind.is-exp {
+  color: var(--danger) !important;
+}
+
+.tx-inline-kind.is-inc {
+  color: var(--success-soft-foreground) !important;
+}
+
+.tx-inline-actions .icon-btn {
+  padding: 4px !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tx-inline-actions .icon-btn.save-btn {
+  color: var(--primary) !important;
+}
+
+.tx-inline-actions .icon-btn:hover:not(:disabled) {
+  background: var(--card) !important;
+}
+
+.tx-inline-actions .icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tx-inline-error-row > td {
+  padding: 0 0 8px 0 !important;
+  border-bottom: none !important;
+}
+
+.tx-inline-error-row .inline-tx-error {
+  margin-top: 0;
+}
+
+/* Dashboard card: the row gives way to the same compact strip used for adding,
+   because that card has no table to put cells back into. A strict two-column
+   grid keeps it readable in a card that is narrower than the page. */
+.mini-tx.is-editing {
+  display: block;
+  padding: 8px 0;
+}
+
+.mini-tx.is-editing .inline-tx-form-compact {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px !important;
+  flex-wrap: nowrap !important;
+  background: var(--muted) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 8px !important;
+}
+
+.mini-tx.is-editing .inline-tx-form-compact .min-field,
+.mini-tx.is-editing .inline-tx-form-compact .min-type-toggle {
+  flex: none !important;
+  min-width: 0 !important;
+  width: 100%;
+}
+
+/* Kind on its own line, description on its own line: the card is narrower
+   than the page, so the two fields that need width get all of it. */
+.mini-tx.is-editing .inline-tx-form-compact .min-type-toggle,
+.mini-tx.is-editing .inline-tx-form-compact .field-desc {
+  grid-column: 1 / -1;
+}
+
+.mini-tx.is-editing .inline-tx-form-compact .min-field input,
+.mini-tx.is-editing .inline-tx-form-compact .min-field .custom-select-trigger {
+  height: var(--btn-h) !important;
+  font-size: var(--text-sm) !important;
+  width: 100% !important;
+}
+
+.mini-tx.is-editing .inline-tx-form-compact .min-type-toggle {
+  height: var(--btn-h) !important;
+  justify-content: center;
+}
+
+.mini-tx.is-editing .inline-tx-form-compact .min-type-btn {
+  height: calc(var(--btn-h) - 6px) !important;
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+.mini-tx.is-editing .min-save-btn,
+.mini-tx.is-editing .min-cancel-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: var(--btn-h) !important;
+  min-width: 0 !important;
+  width: 100%;
+  justify-content: center;
+  padding: 0 12px !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+}
+
+.mini-tx.is-editing .min-save-btn,
+.mini-tx.is-editing .min-cancel-btn {
+  gap: 6px;
+}
+
+/* Same quiet amount field as the table row: no native steppers. */
+.mini-tx.is-editing .field-amount input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.mini-tx.is-editing .field-amount input::-webkit-outer-spin-button,
+.mini-tx.is-editing .field-amount input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.mini-tx.is-editing .compact-error {
+  grid-column: 1 / -1;
+}
+
+/* ==========================================================================
+   PHONE (<= 640px) - app bar, card rows, scroll rails
+   Appended last so it wins over the long desktop layer above.
+   ========================================================================== */
+@media (max-width: 640px) {
+  /* --- Header: one app bar, then a full-width search ---------------------- */
+  main > header {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px 10px !important;
+    padding: 6px 0 10px !important;
+    position: sticky !important;
+    top: 0;
+    z-index: 30;
+    background: var(--background) !important;
+  }
+
+  main > header .hamb {
+    order: 1;
+    position: static !important;
+    display: inline-flex !important;
+    flex: 0 0 40px;
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 12px !important;
+  }
+
+  main > header .header-heading {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0 !important;
+  }
+
+  main > header .header-actions {
+    order: 3;
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  main > header .topbar-search {
+    order: 4;
+    flex: 1 1 100%;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  main > header .header-heading h1 {
+    font-size: 21px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The sub-line is desktop decoration; the count stays useful. */
+  main > header .header-heading p {
+    display: none !important;
+  }
+
+  main > header .page-mark,
+  main > header .page-mark svg {
+    width: 17px !important;
+    height: 17px !important;
+  }
+
+  /* --- Filter strips: one swipeable row, never a ragged block ------------- */
+  .page-filters,
+  .tx-filters {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+    margin-bottom: 14px !important;
+  }
+
+  .page-filters::-webkit-scrollbar,
+  .tx-filters::-webkit-scrollbar { display: none; }
+
+  .page-filters > *,
+  .tx-filters > * { flex: 0 0 auto; }
+
+  .tx-filters .custom-select-trigger { min-width: 0 !important; }
+
+  /* Segmented controls (report view switch) scroll instead of clipping. */
+  .seg {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .seg::-webkit-scrollbar { display: none; }
+  .seg-item { flex: 0 0 auto; }
+
+  /* --- Transactions: one card per record --------------------------------- */
+  .transactions-scroll-container {
+    overflow: visible !important;
+  }
+
+  .transactions-scroll-container table,
+  .transactions-scroll-container thead,
+  .transactions-scroll-container tbody,
+  .transactions-scroll-container tr,
+  .transactions-scroll-container td {
+    display: block;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+
+  .transactions-scroll-container thead { display: none !important; }
+
+  .transactions-scroll-container tbody tr {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto;
+    align-items: center;
+    column-gap: 10px;
+    padding: 11px 2px !important;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .transactions-scroll-container tbody tr:last-child { border-bottom: 0; }
+
+  .transactions-scroll-container tbody td {
+    height: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    background: transparent !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(1) {
+    grid-column: 1; grid-row: 1;
+    font-size: 15px !important;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(2) {
+    grid-column: 1; grid-row: 2;
+    justify-self: start;
+    margin-top: 4px;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(3) {
+    grid-column: 1; grid-row: 3;
+    margin-top: 4px;
+    font-size: 12px !important;
+    color: var(--muted-foreground) !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(4) {
+    grid-column: 2; grid-row: 3;
+    justify-self: end;
+    margin-top: 4px;
+    font-size: 11px !important;
+    opacity: 0.8;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(5) {
+    grid-column: 2; grid-row: 1;
+    justify-self: end;
+    text-align: right;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(5) b {
+    font-size: 16px !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(6) {
+    grid-column: 2; grid-row: 2;
+    justify-self: end;
+    margin-top: 4px;
+  }
+
+  .transactions-scroll-container tbody td[colspan] {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 / -1 !important;
+  }
+
+  .transactions-scroll-container .row-actions { gap: 6px; }
+
+  .transactions-scroll-container .row-actions .icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  /* The inline editor is a small form, not a row: stack its fields. */
+  .transactions-scroll-container tbody tr.tx-inline-row {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 12px !important;
+    margin: 6px 0;
+    border: 1px solid var(--border) !important;
+    border-radius: 14px;
+    background: var(--accent) !important;
+  }
+
+  .transactions-scroll-container tbody tr.tx-inline-row > td {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+
+  /* --- Other data tables: swipe sideways rather than crush the columns ---- */
+  .table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .table-wrap table { min-width: 540px; }
+
+  /* --- Fixed install banner must not sit on top of the last row ----------
+     Clearance is applied only while the banner exists (body class), see the
+     MOB-02 block at the end of this file. */
+}
+
+@media (max-width: 380px) {
+  main > header .header-heading h1 { font-size: 19px !important; }
+  .transactions-scroll-container tbody td:nth-child(5) b { font-size: 15px !important; }
+}
+
+/* --- Follow-up: legacy rules give the heading and the (often empty) actions
+   bar a 100% width, which forced each onto its own row under the menu button. */
+@media (max-width: 640px) {
+  main > header {
+    margin: 0 0 6px !important;
+    padding: 6px 0 8px !important;
+  }
+
+  main > header .header-heading {
+    width: auto !important;
+    flex: 1 1 0 !important;
+  }
+
+  main > header .header-actions {
+    width: auto !important;
+    flex: 0 0 auto !important;
+  }
+
+  main > header .header-actions:empty { display: none !important; }
+
+  /* Filter actions ride at the end of the swipe rail as one 36px row. */
+  .page-filters .filter-actions {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    flex-wrap: nowrap !important;
+    margin-left: 4px !important;
+    align-items: center;
+  }
+
+  .page-filters .filter-actions > * { height: 36px !important; }
+}
+
+/* Filter row wraps so its trailing buttons are never half-cut; the transaction
+   filter strip above keeps its swipe rail. */
+@media (max-width: 640px) {
+  .page-filters {
+    flex-wrap: wrap !important;
+    overflow: visible !important;
+    row-gap: 8px !important;
+  }
+
+  .page-filters .filter-actions {
+    flex: 0 0 auto !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* The action cluster gets its own full-width line so its last button never
+   hangs off the viewport. */
+@media (max-width: 640px) {
+  .page-filters .filter-actions {
+    width: 100% !important;
+    flex: 1 1 100% !important;
+    flex-wrap: wrap !important;
+    justify-content: flex-start !important;
+  }
+
+  .page-filters .filter-actions > .blue,
+  .page-filters .filter-actions > .soft {
+    max-width: 100%;
+  }
+}
+
+/* ==========================================================================
+   MOBILE AUDIT PASS - pages, tables, life rails, drawer
+   ========================================================================== */
+
+@media (max-width: 1024px) {
+  /* The drawer must be opaque. A later theme rule paints .sidebar transparent
+     (fine on desktop, where the page shows through by design) and wins on
+     source order, so restate it here, last. */
+  .sidebar,
+  [data-theme='dark'] .sidebar,
+  [data-theme='light'] .sidebar {
+    background: var(--card) !important;
+    width: min(86vw, 320px) !important;
+    z-index: 100 !important;
+    box-shadow: 0 24px 70px rgb(0 0 0 / 0.45) !important;
+  }
+
+  .sidebar .brand .close {
+    width: 40px !important;
+    height: 40px !important;
+    flex: 0 0 40px;
+  }
+
+  .sidebar nav button {
+    min-height: 46px !important;
+    border-radius: 12px !important;
+  }
+
+  /* Keep the install banner under the drawer. */
+  .install-prompt { z-index: 95 !important; }
+}
+
+@media (max-width: 640px) {
+  /* --- Tables: size columns to their content and scroll the overflow ------- */
+  .table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .table-wrap table {
+    table-layout: auto !important;
+    width: max-content !important;
+    min-width: 100% !important;
+  }
+
+  .table-wrap th,
+  .table-wrap td { white-space: nowrap; }
+
+  /* An empty table is a message, not a grid of crushed headers. */
+  .table-wrap:has(td .empty) table {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .table-wrap:has(td .empty) thead { display: none !important; }
+
+  /* --- Life pages: chips wrap instead of hiding past the screen edge ------ */
+  .life-chip-row,
+  .life-toolbar > .life-chip-row {
+    flex-wrap: wrap !important;
+    overflow: visible !important;
+    width: auto !important;
+    max-width: 100% !important;
+    row-gap: 6px;
+  }
+
+  .life-chip,
+  .life-segmented button { height: 32px !important; }
+
+  .life-chip b,
+  .life-segmented button b { font-size: 11px !important; }
+
+  .life-toolbar { row-gap: 8px; }
+  .life-toolbar-right { flex-wrap: wrap; }
+  .life-toolbar > .life-toolbar-right .life-select,
+  .life-toolbar-right select { min-height: 38px !important; }
+
+  /* --- Tap targets -------------------------------------------------------- */
+  .install-prompt-close {
+    min-width: 32px !important;
+    min-height: 32px !important;
+    font-size: 24px !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+  }
+
+  .task-check { width: 22px !important; height: 22px !important; }
+  .task-clear { min-height: 32px !important; }
+  .channel-net-row { min-height: 34px !important; }
+  .ai-conv-del { width: 32px !important; height: 32px !important; }
+  .ai-rail-toggle { width: 34px !important; height: 34px !important; }
+
+  /* --- Smallest meta text gets one step up --------------------------------- */
+  .tmc-label,
+  .task-age,
+  .header-heading .heading-count { font-size: 11px !important; }
+
+  /* The assistant composer must clear the fixed install banner, and a
+     keyboard-shrunk viewport must not keep the desktop 520px floor.
+     Both are handled in the MOB-02 block at the end of this file. */
+}
+
+/* --- Empty tables: no columns, so let the message wrap inside the card ---- */
+@media (max-width: 640px) {
+  .table-wrap:has(td .empty) table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+  }
+
+  .table-wrap:has(td .empty) th,
+  .table-wrap:has(td .empty) td,
+  .table-wrap:has(.empty) .empty { white-space: normal !important; }
+
+  /* The report view switch yields to the card width and scrolls inside. */
+  .seg { flex: 0 1 auto !important; min-width: 0 !important; }
+  .reports-layout .card-head { min-width: 0; }
+
+  /* Assistant rail toggle keeps a tappable box even though its icon is small. */
+  .ai-rail-toggle { min-width: 34px !important; min-height: 34px !important; }
+  .task-check { width: 24px !important; height: 24px !important; }
+}
+
+/* The drawer is the top layer; the install banner must not peek past it. */
+@media (max-width: 1024px) {
+  body:has(.sidebar.show) .install-prompt { display: none !important; }
+}
+
+/* Report view switch: icons off and tighter padding so both options fit the
+   card instead of the second one hanging past the edge. */
+@media (max-width: 640px) {
+  .reports-layout .seg { width: 100% !important; }
+  .reports-layout .seg .seg-item {
+    flex: 1 1 auto !important;
+    padding: 0 8px !important;
+    font-size: 12px !important;
+    min-width: 0 !important;
+    white-space: nowrap;
+  }
+  .reports-layout .seg .seg-item svg,
+  .reports-layout .seg .seg-count { display: none !important; }
+
+  /* Text links in empty states get a fingertip, not a hairline. */
+  .card .link,
+  .panel .link,
+  .empty .link {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+/* --- Dialogs: even gutters and less inner padding on phones ---------------- */
+@media (max-width: 640px) {
+  .overlay {
+    padding: 16px !important;
+    place-items: center !important;
+  }
+
+  .overlay > .modal,
+  .overlay .modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 18px !important;
+    max-height: calc(100dvh - 32px) !important;
+  }
+
+  /* Dense chip strips: two rows instead of five. */
+  .life-chip {
+    height: 30px !important;
+    padding: 0 9px !important;
+    font-size: 12.5px !important;
+  }
+
+  .life-chip b { font-size: 10.5px !important; }
+}
+
+/* Reports has three long view labels; they cannot all fit at phone width, so
+   the strip scrolls (with a fade) instead of shrinking into overlap. */
+@media (max-width: 640px) {
+  .reports-layout .seg {
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
+    mask-image: linear-gradient(to right, #000 88%, transparent);
+  }
+
+  .reports-layout .seg::-webkit-scrollbar { display: none; }
+
+  .reports-layout .seg .seg-item {
+    flex: 0 0 auto !important;
+    padding: 0 10px !important;
+    font-size: 12.5px !important;
+    white-space: nowrap !important;
+  }
+}
+
+/* ==========================================================================
+   MOB-02 - phone toolbar layout and fixed-banner clearance
+   Scoped to phone widths; desktop keeps the single-line toolbar.
+   ========================================================================== */
+@media (max-width: 640px) {
+  /* The category strip is a flex child of the toolbar. The desktop rule gives
+     it `flex: 1 1 0%` so it can share one line with the tabs; at phone width
+     that leaves 27-106px, and wrapping then stacks every chip in a narrow
+     column. Give the strip its own full-width row. */
+  .life-toolbar {
+    align-items: center !important;
+    row-gap: 8px !important;
+  }
+
+  .life-toolbar > .life-segmented { order: 1; }
+
+  .life-toolbar > .life-chip.is-manage {
+    order: 2;
+    margin-left: auto !important;
+  }
+
+  .life-toolbar > .life-chip-row {
+    order: 3;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding-right: 0 !important;
+    margin-right: 0 !important;
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+  }
+
+  .life-toolbar > .life-toolbar-right {
+    order: 4;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+  }
+
+  /* Activity has no Manage chip, so its Clear button can stay beside the tabs
+     instead of taking a row of its own. */
+  .life-toolbar:not(:has(> .life-chip.is-manage)) > .life-toolbar-right {
+    order: 2;
+    width: auto !important;
+    flex: 0 0 auto !important;
+    margin-left: auto;
+  }
+
+  /* Bottom clearance for the fixed install banner, only while it is visible.
+     The page footer is outside the scroll area, so it needs no offset. */
+  body.has-install-prompt .content { padding-bottom: 48px !important; }
+  body.has-install-prompt .life-panel > .life-scroll { padding-bottom: 60px !important; }
+
+  /* The assistant uses a magic `100dvh - 158px` height, which starts below a
+     title block and therefore runs past a short (keyboard) viewport. Let the
+     page fill the content area instead, so the composer is always its last
+     visible row. */
+  .content:has(.ai-page) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden !important;
+  }
+
+  .content:has(.ai-page) .ai-page,
+  .content:has(.ai-page) .ai-page.is-collapsed {
+    flex: 1 1 auto;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .content:has(.ai-page) .ai-page {
+    grid-template-rows: minmax(80px, 20vh) minmax(0, 1fr);
+  }
+
+  /* When the thread is short (keyboard viewport) its own header and generous
+     padding leave no room for the composer, which then gets clipped by the
+     thread's overflow. Collapse those only while the thread is actually short;
+     a normal phone keeps the header. */
+  .ai-thread {
+    container-type: size;
+    container-name: thread;
+  }
+
+  /* The content area is the real viewport for this page; when it is very short
+     (keyboard) the conversation rail is collapsed so the thread — and its
+     composer — keep the full height. */
+  .content:has(.ai-page) {
+    container-type: size;
+    container-name: ai-content;
+  }
+
+  @container ai-content (max-height: 240px) {
+    .ai-page,
+    .ai-page.is-collapsed {
+      grid-template-rows: minmax(0, 1fr) !important;
+    }
+
+    .ai-page .ai-rail {
+      display: none !important;
+    }
+  }
+
+  @container thread (max-height: 240px) {
+    .ai-thread-head {
+      display: none;
+    }
+
+    .ai-thread-body {
+      padding: 8px 12px;
+      gap: 10px;
+    }
+
+    .ai-composer {
+      padding: 6px 10px 8px !important;
+    }
+
+    .ai-composer textarea {
+      height: 42px !important;
+      min-height: 42px !important;
+      padding: 8px 10px !important;
+    }
+  }
+
+  body.has-install-prompt .content:has(.ai-page) { padding-bottom: 100px !important; }
+}
+
+/* ==========================================================================
+   MOB-03 - compact Tasks, Journal and Notes on phones
+   One shared rhythm; page-specific details stay scoped to their page.
+   ========================================================================== */
+@media (max-width: 640px) {
+  .life-page { gap: 10px !important; }
+
+  .life-page .life-hero {
+    padding: 0 !important;
+    gap: 6px !important;
+  }
+
+  .life-page .life-hero-actions {
+    width: auto !important;
+    margin-left: auto;
+  }
+
+  .life-page .life-hero-actions .life-btn {
+    height: 32px !important;
+    padding: 0 12px !important;
+    font-size: 12.5px !important;
+  }
+
+  /* Metrics: one compact strip instead of four large cards. */
+  .life-page .life-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .life-page .life-stat {
+    min-height: 0 !important;
+    padding: 6px 7px 7px 9px !important;
+    border-radius: 9px !important;
+    gap: 1px !important;
+  }
+
+  .life-page .life-stat::before {
+    top: 6px !important;
+    bottom: 6px !important;
+  }
+
+  .life-page .life-stat-top {
+    font-size: 7.5px !important;
+    letter-spacing: 0.05em !important;
+    line-height: 1.15 !important;
+    min-height: 17px;
+    align-items: flex-start;
+  }
+
+  .life-page .life-stat-top i { display: none !important; }
+
+  .life-page .life-stat strong {
+    font-size: 17px !important;
+    line-height: 1.1 !important;
+    margin-top: 0 !important;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .life-page .life-stat small { display: none !important; }
+
+  /* Toolbar: compact tabs, one non-wrapping chip rail, controls above content. */
+  .life-page .life-toolbar {
+    gap: 6px !important;
+    row-gap: 6px !important;
+    padding-bottom: 0 !important;
+  }
+
+  .life-page .life-toolbar > .life-segmented {
+    order: 1;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    width: auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+    height: 30px !important;
+    padding: 0 2px !important;
+    border-radius: 9px !important;
+  }
+
+  .life-page .life-toolbar > .life-segmented::-webkit-scrollbar { display: none; }
+
+  .life-page .life-toolbar > .life-segmented button {
+    flex: 0 0 auto;
+    height: 28px !important;
+    padding: 0 9px !important;
+    font-size: 12px !important;
+    border-radius: 7px !important;
+  }
+
+  .life-page .life-toolbar > .life-segmented button b { font-size: 9px !important; }
+
+  .life-page .life-toolbar > .life-chip-row {
+    order: 2;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding: 0 16px 0 0 !important;
+    margin: 0 !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent) !important;
+    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent) !important;
+  }
+
+  .life-page .life-toolbar > .life-chip-row::-webkit-scrollbar { display: none; }
+
+  .life-page .life-toolbar > .life-chip-row > * { flex: 0 0 auto !important; }
+
+  .life-page .life-chip {
+    height: 28px !important;
+    padding: 0 9px !important;
+    font-size: 12px !important;
+  }
+
+  .life-page .life-chip b { font-size: 10px !important; }
+
+  .life-page .life-toolbar > .life-chip.is-manage {
+    order: 3;
+    height: 30px !important;
+    margin-left: 0 !important;
+  }
+
+  .life-page .life-toolbar > .life-toolbar-right {
+    order: 4;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    margin-left: auto;
+    gap: 6px;
+  }
+
+  .life-page .life-toolbar-right .life-select,
+  .life-page .life-toolbar-right .life-select.as-button,
+  .life-page .life-toolbar-right .life-toggle { height: 30px !important; }
+
+  .life-page .life-toolbar-right .life-select select { font-size: 12px !important; }
+
+  /* Tasks: thin progress line and tighter rows. */
+  .life-page .task-progress-row {
+    margin: 0 0 2px !important;
+    gap: 6px !important;
+  }
+
+  .life-page .task-progress {
+    min-width: 0 !important;
+    font-size: 8.5px !important;
+    gap: 8px !important;
+  }
+
+  .life-page .life-progress { height: 3px !important; }
+  .life-page .task-list { gap: 10px !important; }
+  .life-page .task-row { padding: 7px 6px 7px 8px !important; gap: 9px !important; }
+  .life-page .task-group-head { padding-bottom: 5px !important; }
+
+  /* Journal: tighter timeline, smaller cards, touch-visible actions. */
+  .life-page .journal-timeline { gap: 12px !important; }
+  .life-page .journal-month-head { margin-bottom: 6px !important; }
+  .life-page .journal-entries { gap: 6px !important; }
+  .life-page .journal-entry { gap: 8px !important; }
+  .life-page .journal-entry-card { padding: 8px 10px 7px !important; }
+  .life-page .journal-entry-card h3 { font-size: 17px !important; }
+  .life-page .journal-entry-card p {
+    font-size: 12px !important;
+    -webkit-line-clamp: 2 !important;
+    margin-bottom: 4px !important;
+  }
+  .life-page .journal-entry-tools { opacity: 1 !important; }
+  .life-page .journal-cats { padding-bottom: 0 !important; }
+
+  /* Notes: one column, denser cards. */
+  .life-page .notes-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+
+  .life-page .note-card {
+    min-height: 0 !important;
+    padding: 10px 11px 9px !important;
+    gap: 5px !important;
+  }
+
+  .life-page .note-card h3 { font-size: 16px !important; }
+
+  .life-page .note-body {
+    font-size: 12.5px !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+
+  .life-page .note-tags { gap: 6px !important; }
+  .life-page .notes-section + .notes-section { margin-top: 0 !important; }
+}
+
+/* MOB-03 follow-up: keep the task progress bar full-width, and give chips a
+   30px touch target like the controls beside them. */
+@media (max-width: 640px) {
+  .life-page .life-chip,
+  .life-page .life-toolbar > .life-chip.is-manage { height: 30px !important; }
+
+  .life-page .task-progress {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* MOB-04: page actions become a single "+" on phones; the label returns on
+   wider viewports. */
+@media (max-width: 640px) {
+  .life-page .life-hero-actions .life-btn {
+    width: 34px !important;
+    min-width: 34px;
+    height: 34px !important;
+    min-height: 34px !important;
+    max-height: 34px !important;
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  .life-page .life-hero-actions .life-btn-label { display: none !important; }
+}
+
+/* ==========================================================================
+   MOB-05 - one header row on phones: menu, title, search, theme, page action.
+   The life pages portal their action into .header-actions (see PageHero).
+   ========================================================================== */
+@media (max-width: 640px) {
+  main > header {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 4px 0 8px !important;
+    margin: 0 0 4px !important;
+  }
+
+  main > header .hamb {
+    order: 1;
+    flex: 0 0 38px;
+    width: 38px !important;
+    height: 38px !important;
+    border-radius: 10px !important;
+  }
+
+  main > header .header-heading {
+    order: 2;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0;
+    max-width: 44%;
+    overflow: hidden;
+  }
+
+  main > header .header-title .page-mark { display: none !important; }
+
+  main > header .header-heading h1 {
+    font-size: 18px !important;
+    line-height: 1.1 !important;
+  }
+
+  main > header .topbar-search {
+    order: 3;
+    flex: 1 1 0% !important;
+    width: auto !important;
+    min-width: 0;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 6px;
+  }
+
+  main > header .search {
+    height: 38px !important;
+    padding: 0 10px !important;
+    min-width: 0;
+  }
+
+  main > header .search input { font-size: 13px !important; min-width: 0; width: 100%; }
+
+  main > header .theme-btn-single {
+    width: 36px !important;
+    height: 36px !important;
+    flex: 0 0 36px;
+  }
+
+  main > header .header-actions {
+    order: 4;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    overflow: visible;
+  }
+
+  main > header .header-actions:empty { display: none !important; }
+
+  main > header .header-actions .blue,
+  main > header .header-actions .life-btn {
+    width: 34px !important;
+    min-width: 34px;
+    height: 34px !important;
+    min-height: 34px !important;
+    max-height: 34px !important;
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  main > header .header-actions .btn-label,
+  main > header .header-actions .life-btn-label { display: none !important; }
+
+  main > header .header-actions .life-hero-actions {
+    display: flex;
+    align-items: center;
+    width: auto;
+    margin: 0;
+  }
+}
+
+/* ==========================================================================
+   MOB-06 - icon search, no phone theme toggle, even control type,
+   and a compact one-row task layout.
+   ========================================================================== */
+
+.search-trigger,
+.search-close { display: none; }
+
+@media (max-width: 640px) {
+  /* Theme switching is desktop-only now; the phone header keeps search + action. */
+  main > header .theme-btn-single { display: none !important; }
+
+  main > header .search-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 38px;
+    width: 38px;
+    height: 38px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--card);
+    color: var(--muted-foreground);
+    cursor: pointer;
+  }
+
+  main > header .gsearch { display: none !important; }
+  main > header .topbar-search { justify-content: flex-start; }
+
+  main > header .topbar-search.is-open {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 90;
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px !important;
+    margin: 0 !important;
+    background: var(--background);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  main > header .topbar-search.is-open .gsearch {
+    display: flex !important;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  main > header .topbar-search.is-open .search-trigger { display: none !important; }
+  main > header .topbar-search.is-open .search { height: 40px !important; }
+  main > header .topbar-search.is-open .gsearch-panel { z-index: 96; }
+
+  main > header .search-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 38px;
+    width: 38px;
+    height: 38px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--foreground);
+    cursor: pointer;
+  }
+
+  /* One type scale for tabs, chips and counts. */
+  .life-page .life-segmented button {
+    font-size: 12.5px !important;
+    font-weight: 500;
+  }
+
+  .life-page .life-segmented button.is-active { font-weight: 600; }
+
+  .life-page .life-segmented button b {
+    font-size: 10px !important;
+    font-weight: 500;
+  }
+
+  .life-page .life-chip {
+    font-size: 12.5px !important;
+    font-weight: 500;
+  }
+
+  .life-page .life-chip.is-active { font-weight: 600; }
+  .life-page .life-chip b { font-size: 10px !important; }
+
+  .life-page .life-toolbar-right .life-select b { font-size: 12.5px !important; }
+  .life-page .life-toolbar-right .life-select > span { font-size: 8.5px !important; }
+}
+
+/* Task rows: check, date badge, text and priority on ONE line. The previous
+   grid let the badge take the text column, pushing the title to a second row. */
+@media (max-width: 768px) {
+  .life-page .task-row {
+    display: grid !important;
+    grid-template-columns: auto auto minmax(0, 1fr) auto !important;
+    grid-template-rows: auto !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 8px 6px !important;
+  }
+
+  .life-page .task-row > .task-check { grid-column: 1; grid-row: 1; }
+  .life-page .task-row > .journal-day { grid-column: 2; grid-row: 1; }
+
+  .life-page .task-row > .task-main {
+    grid-column: 3 !important;
+    grid-row: 1;
+    flex: initial !important;
+    order: 0 !important;
+    min-width: 0;
+  }
+
+  .life-page .task-row > .task-prio {
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
+    align-self: center;
+  }
+
+  .life-page .task-row > .task-actions { display: none !important; }
+
+  .life-page .task-row .task-text {
+    font-size: 14px !important;
+    line-height: 1.3;
+  }
+
+  .life-page .task-row .task-meta {
+    font-size: 11px !important;
+    gap: 8px;
+  }
+
+  .life-page .task-row .task-prio {
+    font-size: 10px !important;
+    padding: 3px 7px;
+  }
+
+  .life-page .task-row .journal-day {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  .life-page .task-row .journal-day b { font-size: 14px !important; }
+  .life-page .task-row .journal-day small { font-size: 9px !important; }
+  .life-page .task-group-head span,
+  .life-page .task-group-head b { font-size: 10px !important; }
+}
+
+/* MOB-06 follow-up: outrank the earlier toolbar rules so tabs and chips share
+   exactly one type scale. */
+@media (max-width: 640px) {
+  .life-page .life-toolbar > .life-segmented > button {
+    font-size: 12.5px !important;
+    font-weight: 500 !important;
+  }
+
+  .life-page .life-toolbar > .life-segmented > button.is-active { font-weight: 600 !important; }
+  .life-page .life-toolbar > .life-segmented > button > b { font-size: 10px !important; }
+
+  .life-page .life-toolbar > .life-chip-row > .life-chip,
+  .life-page .life-toolbar > .life-chip.is-manage {
+    font-size: 12.5px !important;
+    font-weight: 500 !important;
+  }
+
+  .life-page .life-toolbar > .life-chip-row > .life-chip.is-active { font-weight: 600 !important; }
+  .life-page .life-toolbar > .life-chip-row > .life-chip > b { font-size: 10px !important; }
+}
+
+/* Touch devices keep :hover after a tap; task rows should stay uniform. */
+@media (hover: none) and (max-width: 767px) {
+  .life-page .task-row:hover {
+    background: transparent !important;
+    border-color: transparent !important;
+  }
+}
+
+/* MOB-07 - theme control beside Sign out on phones; the magnifier sits next
+   to the page action instead of next to the title. */
+.theme-btn-sidebar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .theme-btn-sidebar { display: inline-flex; }
+
+  main > header .topbar-search {
+    justify-content: flex-end !important;
+  }
+}

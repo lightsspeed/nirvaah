@@ -37,3 +37,11 @@ tmp/
 
 # local source backups
 frontend/.src-backup-*/
+
+# AWS deploy (Lightsail)
+infra/aws/.terraform/
+infra/aws/*.tfstate
+infra/aws/*.tfstate.*
+infra/aws/tfplan
+infra/aws/terraform.tfvars
+

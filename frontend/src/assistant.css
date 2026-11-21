@@ -519,3 +519,85 @@
   .ai-thread-tag { display: none; }
   .ai-thread-body { padding: 16px; }
 }
+
+/* Phone composer: one comfortable line, never a clipped second line. */
+@media (max-width: 640px) {
+  .ai-composer { padding: 10px 12px 12px !important; }
+  .ai-composer textarea {
+    height: 52px !important;
+    min-height: 52px !important;
+    padding: 10px 12px !important;
+    font-size: 13px !important;
+    line-height: 1.35 !important;
+  }
+}
+
+/* ==========================================================================
+   MOB-04 - phone assistant: one pane at a time (list or conversation)
+   Desktop keeps the side-by-side rail.
+   ========================================================================== */
+
+.ai-new-mini { display: none; }
+
+@media (max-width: 900px) {
+  .ai-page,
+  .ai-page.is-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  /* Collapsed = conversation; expanded = conversation list. */
+  .ai-page .ai-rail { display: none !important; }
+  .ai-page:not(.is-collapsed) .ai-rail { display: flex !important; }
+  .ai-page:not(.is-collapsed) .ai-thread { display: none !important; }
+
+  .ai-rail { max-height: none; }
+  .ai-rail-head { padding: 10px; }
+  .ai-thread { height: auto; min-height: 0; }
+
+  .ai-thread-head { padding: 10px 12px; gap: 10px; }
+  .ai-thread-head > div { flex: 1 1 auto; min-width: 0; }
+  .ai-thread-head h3 {
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ai-thread-head small {
+    display: block;
+    font-size: 11px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ai-thread-tag { display: none; }
+
+  .ai-new-mini {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    margin-left: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--foreground);
+    cursor: pointer;
+  }
+
+  .ai-thread-body { padding: 12px 14px; gap: 12px; }
+}
+
+@media (max-width: 640px) {
+  /* Fill the content area exactly; MOB-02's two-row grid is replaced by the
+     single-pane switch above. */
+  .content:has(.ai-page) .ai-page,
+  .content:has(.ai-page) .ai-page.is-collapsed {
+    grid-template-rows: minmax(0, 1fr) !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+}

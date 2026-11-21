@@ -1,0 +1,60 @@
+/* Connectivity notice. Fixed, like the install banner, but ranked below the
+   drawer and offset above the install prompt when both are present. */
+.offline-notice {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index: 94;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: #2a2116;
+    color: #f6e7c8;
+    border: 1px solid #6b5220;
+    box-shadow: 0 10px 30px rgba(16, 19, 27, 0.28);
+    font-size: 12.5px;
+    line-height: 1.4;
+}
+
+.offline-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: #e0a92e;
+}
+
+.offline-notice strong {
+    font-weight: 600;
+}
+
+body.has-install-prompt .offline-notice {
+    bottom: calc(108px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (prefers-color-scheme: light) {
+    .offline-notice {
+        background: #fff7e6;
+        color: #4a3410;
+        border-color: #e3c88a;
+    }
+}
+
+/* Keep the last interactive row reachable while the notice is on screen. */
+@media (max-width: 640px) {
+    body.is-offline .content { padding-bottom: 64px !important; }
+    body.is-offline .life-panel > .life-scroll { padding-bottom: 76px !important; }
+    body.is-offline .auth { padding-bottom: 76px; }
+}
+
+/* The notice overlays the bottom of the scroll area at every width; keep the
+   last row clear on desktop too. */
+body.is-offline .content {
+    padding-bottom: 72px;
+}

@@ -1,0 +1,50 @@
+#!/bin/bash
+# Lightsail prepends its own "#!/bin/sh" banner to user data and runs it with
+# sh, so this must stay POSIX (no `set -o pipefail`, no bashisms).
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+
+SWAP_MB="${swap_mb}"
+
+mkdir -p /opt/nirvaah
+
+# ── swap ──────────────────────────────────────────────────────────────────────
+if ! swapon --show | grep -q '/swapfile'; then
+    fallocate -l "${swap_mb}M" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count="${swap_mb}"
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+fi
+grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+cat > /etc/sysctl.d/99-nirvaah.conf <<'EOF'
+vm.swappiness = 20
+vm.overcommit_memory = 1
+EOF
+sysctl -p /etc/sysctl.d/99-nirvaah.conf >/dev/null 2>&1 || true
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "live-restore": true
+}
+EOF
+
+if ! command -v docker >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y ca-certificates curl
+    curl -fsSL https://get.docker.com | sh
+fi
+
+systemctl enable --now docker
+getent group docker >/dev/null && usermod -aG docker ubuntu || true
+docker compose version >/dev/null 2>&1 || apt-get install -y docker-compose-plugin
+
+# ── unattended security updates, so an idle box still gets patched ───────────
+apt-get install -y unattended-upgrades >/dev/null 2>&1 || true
+
+touch /opt/nirvaah/.host-ready
+echo "nirvaah host ready"

@@ -21,12 +21,29 @@ export default function GlobalSearch({
     onQuery,
     groups,
     onPick,
+    expanded = false,
+    onClose,
     placeholder = 'Search transactions, notes, tasks, journal…',
 }) {
     const [open, setOpen] = useState(false);
     const [active, setActive] = useState(0);
     const wrapRef = useRef(null);
     const inputRef = useRef(null);
+
+    // Focusing when the phone header expands the field.
+    useEffect(() => {
+        if (expanded) inputRef.current?.focus();
+    }, [expanded]);
+
+    // Escape closes the expanded phone search, results included.
+    useEffect(() => {
+        if (!expanded) return undefined;
+        const onKey = e => {
+            if (e.key === 'Escape') { setOpen(false); onClose?.(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [expanded, onClose]);
 
     const flat = useMemo(() => groups.flatMap(g => g.items.map(item => ({ ...item, group: g.id }))), [groups]);
     const total = flat.length;

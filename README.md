@@ -51,6 +51,20 @@ docker compose down
 ```
 
 
+## Deployment (AWS)
+
+Production runs on a single Lightsail instance (Mumbai) behind Caddy with
+automatic TLS: **https://nirvaah.deployone.cloud**. Infrastructure lives in
+`infra/aws` (Terraform), the production compose overlay and deploy script in
+`deploy/`. Cost is ~$7.60/month (~₹710).
+
+```bash
+terraform -chdir=infra/aws init && terraform -chdir=infra/aws apply
+./deploy/deploy.ps1
+```
+
+See `infra/aws/README.md` for the architecture, runbook and cost breakdown.
+
 ## Versioning & Docker Hub
 
 Nirvaah is at **1.0.0**. One number lives in `frontend/package.json`; `VERSION`

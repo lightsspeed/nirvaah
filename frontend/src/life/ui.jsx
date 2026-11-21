@@ -8,6 +8,31 @@ export function PageHero({ title, description, children }) {
     // The page name and its subtext live in the app header now; the hero only
     // keeps copy for views that need their own title (a task project).
     const hasCopy = Boolean(title || description);
+    const [phone, setPhone] = useState(
+        () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+    );
+    const [slot, setSlot] = useState(null);
+
+    useEffect(() => {
+        const query = window.matchMedia('(max-width: 640px)');
+        const sync = () => setPhone(query.matches);
+        sync();
+        query.addEventListener('change', sync);
+        return () => query.removeEventListener('change', sync);
+    }, []);
+
+    useEffect(() => {
+        setSlot(phone ? document.getElementById('page-header-actions') : null);
+    }, [phone, hasCopy]);
+
+    const actions = children ? <div className="life-hero-actions">{children}</div> : null;
+
+    // Phones carry the page action in the header, beside the search, so it does
+    // not consume a row of its own above the content.
+    if (phone && !hasCopy) {
+        return slot && actions ? createPortal(actions, slot) : null;
+    }
+
     return (
         <header className={`life-hero${hasCopy ? '' : ' is-actions-only'}`}>
             {hasCopy && (
@@ -16,7 +41,7 @@ export function PageHero({ title, description, children }) {
                     {description && <p>{description}</p>}
                 </div>
             )}
-            {children && <div className="life-hero-actions">{children}</div>}
+            {actions && (phone ? (slot ? createPortal(actions, slot) : null) : actions)}
         </header>
     );
 }

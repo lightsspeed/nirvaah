@@ -490,8 +490,14 @@ export default function TasksPage() {
                     : undefined}
             >
                 {!isProject && (
-                    <button type="button" className="life-btn is-primary" onClick={() => setAdding(v => !v)}>
-                        <Plus size={15} /> {adding ? 'Close' : 'New task'}
+                    <button
+                        type="button"
+                        className="life-btn is-primary"
+                        onClick={() => setAdding(v => !v)}
+                        aria-label={adding ? 'Close task composer' : 'New task'}
+                    >
+                        {adding ? <X size={15} /> : <Plus size={15} />}
+                        <span className="life-btn-label">{adding ? 'Close' : 'New task'}</span>
                     </button>
                 )}
             </PageHero>

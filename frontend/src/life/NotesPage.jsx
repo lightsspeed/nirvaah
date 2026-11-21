@@ -259,8 +259,8 @@ export default function NotesPage() {
         <div className="life-page notes-page">
             {dialog}
             <PageHero>
-                <button type="button" className="life-btn is-primary" onClick={() => setEditing(emptyDraft())}>
-                    <Plus size={15} /> New note
+                <button type="button" className="life-btn is-primary" onClick={() => setEditing(emptyDraft())} aria-label="New note">
+                    <Plus size={15} /><span className="life-btn-label">New note</span>
                 </button>
             </PageHero>
 
@@ -285,18 +285,17 @@ export default function NotesPage() {
                     <Select
                         compact
                         className="is-sort"
-                        label="Sort"
+                        label={showArchived ? 'Archive' : 'Sort'}
                         value={sort}
-                        onChange={setSort}
-                        options={SORTS.map(s => ({ value: s.id, label: s.label }))}
+                        onChange={value => {
+                            if (value === '__archive__') setShowArchived(v => !v);
+                            else setSort(value);
+                        }}
+                        options={[
+                            ...SORTS.map(s => ({ value: s.id, label: s.label })),
+                            { value: '__archive__', label: showArchived ? 'Hide archive' : 'Show archive' },
+                        ]}
                     />
-                    <button
-                        type="button"
-                        className={`life-toggle${showArchived ? ' is-active' : ''}`}
-                        onClick={() => setShowArchived(v => !v)}
-                    >
-                        <Archive size={13} /> {showArchived ? 'Viewing archive' : 'Show archive'}
-                    </button>
                 </div>
             </div>
 

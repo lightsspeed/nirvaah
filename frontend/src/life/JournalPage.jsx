@@ -287,8 +287,8 @@ export default function JournalPage() {
         <div className="life-page journal-page">
             {dialog}
             <PageHero>
-                <button type="button" className="life-btn is-primary" onClick={() => setEditing(emptyEvent())}>
-                    <Plus size={15} /> Log event
+                <button type="button" className="life-btn is-primary" onClick={() => setEditing(emptyEvent())} aria-label="Log event">
+                    <Plus size={15} /><span className="life-btn-label">Log event</span>
                 </button>
             </PageHero>
 
