@@ -7781,3 +7781,154 @@ main > header .topbar-search {
     justify-content: flex-end !important;
   }
 }
+
+/* ==========================================================================
+   MOB-08 - minimal Transactions on phones: one add action, a single filter
+   rail, and two-line transaction rows.
+   ========================================================================== */
+
+.transactions-frozen-header:empty { display: none !important; }
+
+@media (max-width: 640px) {
+  .page-filters.is-tx {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 0 14px 2px 0 !important;
+    margin-bottom: 10px !important;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent) !important;
+    mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent) !important;
+  }
+
+  .page-filters.is-tx::-webkit-scrollbar { display: none; }
+  .page-filters.is-tx > * { flex: 0 0 auto; }
+
+  .page-filters.is-tx .filter-actions {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    margin-left: 0 !important;
+  }
+
+  .page-filters.is-tx .tx-tag-btn {
+    width: 34px !important;
+    height: 34px !important;
+    padding: 0 !important;
+    justify-content: center;
+  }
+
+  .page-filters.is-tx .tx-tag-btn span { display: none !important; }
+
+  .transactions-frozen-header { margin-bottom: 10px !important; }
+
+  .transactions-scroll-container tbody tr:not(.tx-inline-row) {
+    grid-template-columns: minmax(0, 1fr) auto auto auto !important;
+    grid-template-rows: auto auto !important;
+    column-gap: 8px !important;
+    row-gap: 2px !important;
+    padding: 9px 2px !important;
+  }
+
+  .transactions-scroll-container tbody td { padding: 0 !important; }
+
+  .transactions-scroll-container tbody td:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 14.5px !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(5) {
+    grid-column: 2 / span 3;
+    grid-row: 1;
+    justify-self: end;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(5) b { font-size: 15px !important; }
+
+  .transactions-scroll-container tbody td:nth-child(2) {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(2) .cat-badge-colored {
+    font-size: 10px !important;
+    padding: 2px 7px !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(3) {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0 !important;
+    font-size: 10.5px !important;
+    color: var(--muted-foreground) !important;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(4) {
+    grid-column: 3;
+    grid-row: 2;
+    margin: 0 !important;
+    opacity: 0.85;
+    white-space: nowrap !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(4) .pay-badge-colored {
+    font-size: 9.5px !important;
+    padding: 2px 6px !important;
+  }
+
+  .transactions-scroll-container tbody td:nth-child(6) {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: end;
+    margin: 0 !important;
+  }
+
+  .transactions-scroll-container .row-actions { gap: 4px; }
+
+  .transactions-scroll-container .row-actions .icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+  }
+}
+
+@media (hover: none) and (max-width: 640px) {
+  .transactions-scroll-container tbody tr:hover td {
+    background: transparent !important;
+  }
+}
+
+/* MOB-08 follow-up: compact filter pills so the tag manager stays fully
+   visible instead of sitting past the scroll edge. */
+@media (max-width: 640px) {
+  .page-filters.is-tx { gap: 6px !important; }
+
+  .page-filters.is-tx .date-range-trigger,
+  .page-filters.is-tx .custom-select-trigger {
+    height: 32px !important;
+    padding: 0 9px !important;
+    font-size: 11.5px !important;
+    gap: 5px !important;
+  }
+
+  .page-filters.is-tx .date-range-trigger svg,
+  .page-filters.is-tx .custom-select-trigger svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .page-filters.is-tx .filter-actions .tx-tag-btn {
+    width: 32px !important;
+    height: 32px !important;
+  }
+}

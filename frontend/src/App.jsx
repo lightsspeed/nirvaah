@@ -1199,7 +1199,9 @@ export default function App() {
 
     // ── Inline Transaction Addition state & handler ─────────────────────────────
     const amountInputRef = useRef(null);
-    const [showInlineAdd, setShowInlineAdd] = useState(true);
+    const [showInlineAdd, setShowInlineAdd] = useState(
+        () => typeof window === 'undefined' || !window.matchMedia('(max-width: 640px)').matches
+    );
     const [inlineTx, setInlineTx] = useState(() => ({
         kind: 'expense',
         amount: '',
@@ -1810,12 +1812,23 @@ export default function App() {
                     {/* Page actions, right of the search; life pages portal their
                         hero action into this slot on phones. */}
                     <div className="header-slot header-actions" id="page-header-actions">
-                        {page !== 'Dashboard' && page !== 'Reports' && page !== 'Assistant'
-                            && page !== 'Transactions' && !['Notes', 'Tasks', 'Journal'].includes(page) && (
-                            <button className="blue" onClick={add} aria-label={`Add ${singularPage(page)}`}>
-                                <Plus size={15} />
-                                <span className="btn-label">Add {singularPage(page)}</span>
+                        {page === 'Transactions' ? (
+                            <button
+                                className="blue"
+                                onClick={() => setShowInlineAdd(v => !v)}
+                                aria-label={showInlineAdd ? 'Close quick add' : 'Add transaction'}
+                            >
+                                {showInlineAdd ? <X size={15} /> : <Plus size={15} />}
+                                <span className="btn-label">{showInlineAdd ? 'Close' : 'Add transaction'}</span>
                             </button>
+                        ) : (
+                            page !== 'Dashboard' && page !== 'Reports' && page !== 'Assistant'
+                            && !['Notes', 'Tasks', 'Journal'].includes(page) && (
+                                <button className="blue" onClick={add} aria-label={`Add ${singularPage(page)}`}>
+                                    <Plus size={15} />
+                                    <span className="btn-label">Add {singularPage(page)}</span>
+                                </button>
+                            )
                         )}
                     </div>
                 </header>
@@ -1824,7 +1837,7 @@ export default function App() {
 
                     {/* Dropdowns live in the body, under the header row */}
                     {['Dashboard', 'Reports', 'Budgets', 'Transactions'].includes(page) && (
-                        <div className="page-filters">
+                        <div className={`page-filters${page === 'Transactions' ? ' is-tx' : ''}`}>
                             <DateRangeFilter range={range} onChange={setRange} txRange={txRange} />
                             {page === 'Transactions' && (
                                 <>
@@ -1854,19 +1867,6 @@ export default function App() {
                                         >
                                             <SlidersHorizontal size={13} />
                                             <span>Manage Tags</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className={showInlineAdd ? 'soft tx-toggle-btn' : 'blue tx-toggle-btn'}
-                                            onClick={() => setShowInlineAdd(prev => !prev)}
-                                            title={showInlineAdd ? 'Close quick entry form' : 'Add transaction'}
-                                        >
-                                            <Plus size={14} style={{ transform: showInlineAdd ? 'rotate(45deg)' : 'none', transition: 'transform 0.2s ease' }} />
-                                            <span>{showInlineAdd ? 'Close' : 'Quick add'}</span>
-                                        </button>
-                                        <button className="blue" onClick={add}>
-                                            <Plus size={15} />
-                                            Add transaction
                                         </button>
                                     </div>
                                 </>
