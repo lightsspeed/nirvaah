@@ -7932,3 +7932,51 @@ main > header .topbar-search {
     height: 32px !important;
   }
 }
+
+/* Footer spans: only the dot is tinted; the brand and tagline are plain text. */
+.page-footer .footer-brand,
+.page-footer .footer-tagline {
+  padding: 0 !important;
+  color: inherit !important;
+}
+
+.page-footer .footer-dot { color: var(--primary); }
+
+/* MOB-09 - footer is a single quiet line on phones. */
+@media (max-width: 640px) {
+  .page-footer,
+  [data-theme='dark'] .page-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 3px 8px 2px !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    font-size: 8px !important;
+    line-height: 1.2 !important;
+    letter-spacing: 0.14em !important;
+    color: color-mix(in srgb, var(--muted-foreground) 70%, transparent) !important;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .page-footer .footer-dot,
+  .page-footer .footer-tagline { display: none !important; }
+
+  .page-footer span { padding: 0 !important; }
+  .page-footer .footer-brand { opacity: 0.75; }
+
+  .page-footer .app-version {
+    margin-left: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    font-size: 8px !important;
+    letter-spacing: 0.04em !important;
+    opacity: 0.55;
+  }
+}
