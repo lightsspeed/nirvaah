@@ -7980,3 +7980,46 @@ main > header .topbar-search {
     opacity: 0.55;
   }
 }
+
+/* ==========================================================================
+   MOB-10 - page marks in the phone header, a thinner footer pinned low.
+   ========================================================================== */
+@media (max-width: 640px) {
+  main > header .header-title .page-mark {
+    display: grid !important;
+    width: 17px !important;
+    height: 17px !important;
+  }
+
+  main > header .header-title { gap: 6px !important; }
+
+  .page-footer,
+  [data-theme='dark'] .page-footer {
+    padding: 2px 8px 1px !important;
+    margin-top: auto !important;
+    gap: 8px;
+    font-size: 7px !important;
+    letter-spacing: 0.12em !important;
+    line-height: 1.2 !important;
+  }
+
+  .page-footer .app-version { font-size: 7px !important; }
+}
+
+/* MOB-10 follow-up: equal 10px page margins on phones, so the footer sits as
+   low as the side gutters, and a thinner footer line. */
+@media (max-width: 768px) {
+  .shell { padding-bottom: 10px !important; }
+}
+
+@media (max-width: 640px) {
+  .page-footer,
+  [data-theme='dark'] .page-footer {
+    padding: 1px 8px 1px !important;
+    font-size: 6.5px !important;
+    letter-spacing: 0.1em !important;
+    gap: 6px;
+  }
+
+  .page-footer .app-version { font-size: 6.5px !important; }
+}

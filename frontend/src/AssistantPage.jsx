@@ -401,8 +401,10 @@ export default function AssistantPage({ api, user, onChanged }) {
                         value={input}
                         onChange={e => setInput(e.target.value)}
                         onKeyDown={onKeyDown}
+                        aria-label="Message Nirvaah"
+                        enterKeyHint="send"
                     />
-                    <button type="button" className="ai-send" disabled={busy || !input.trim()} onClick={() => send()} title="Send">
+                    <button type="button" className="ai-send" disabled={busy || !input.trim()} onClick={() => send()} title="Send" aria-label="Send message">
                         <Send size={17} />
                     </button>
                 </div>
