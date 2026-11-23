@@ -3161,7 +3161,10 @@ export default function App() {
 
                 </div>
                 <footer className="page-footer">
-                    <span className="footer-brand">NIRVAAH</span>
+                    <span className="footer-brand">
+                        <img className="footer-mark" src="/icon-192.png" alt="" width="14" height="14" />
+                        NIRVAAH
+                    </span>
                     <span className="footer-dot">·</span>
                     <span className="footer-tagline">A considered view of your money.</span>
                     <span className="app-version">v{typeof __APP_VERSION__ === 'undefined' ? '1.0.0' : __APP_VERSION__}</span>
