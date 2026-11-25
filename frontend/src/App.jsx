@@ -98,6 +98,53 @@ const EXPENSE_CATEGORY_ADDITIONS = ['Investments', 'Savings'];
 const DEFAULT_INCOME_CATS = ['Salary', 'Interest', 'Transferred', 'Stocks', 'Freelance', 'Other'];
 const DEFAULT_PAYMENT_METHODS = ['SBI', 'HDFC', 'Cash', 'Debit Card', 'Credit Card', 'Net Banking', 'Bank Transfer', 'Other'];
 
+/* Transaction types shown in the UI.
+ *
+ * The API stores two kinds. A SIP or a transfer to savings is money leaving the
+ * account, so both are stored as an expense with a dedicated category rather
+ * than as a new kind the reports and the assistant do not understand. The type
+ * is derived from (kind, category), which keeps old rows working and makes the
+ * four choices round-trip through edit. */
+const TX_TYPES = [
+    { id: 'expense', label: 'Expense', icon: ArrowUpRight },
+    { id: 'income', label: 'Income', icon: ArrowDownLeft },
+    { id: 'investment', label: 'Investments', icon: TrendingUp },
+    { id: 'savings', label: 'Savings', icon: Target },
+];
+const TX_TYPE_BY_ID = Object.fromEntries(TX_TYPES.map(t => [t.id, t]));
+
+const txTypeOf = tx => {
+    if (tx?.kind === 'income') return 'income';
+    if (tx?.category === 'Investments') return 'investment';
+    if (tx?.category === 'Savings') return 'savings';
+    return 'expense';
+};
+const txTypeMeta = type => TX_TYPE_BY_ID[type] || TX_TYPE_BY_ID.expense;
+
+const categoriesForType = (type, expenseCats, incomeCats) => {
+    if (type === 'income') return incomeCats;
+    if (type === 'investment' || type === 'savings') {
+        return Array.from(new Set([...expenseCats, ...incomeCats, 'Investments', 'Savings'])).sort();
+    }
+    return expenseCats;
+};
+
+const withTxType = (tx, type, expenseCats, incomeCats) => {
+    if (type === 'income') {
+        return {
+            ...tx,
+            kind: 'income',
+            category: incomeCats.includes(tx.category) ? tx.category : (incomeCats[0] || 'Salary'),
+        };
+    }
+    if (type === 'investment' || type === 'savings') {
+        return { ...tx, kind: 'expense', category: type === 'investment' ? 'Investments' : 'Savings' };
+    }
+    const keep = expenseCats.includes(tx.category) && tx.category !== 'Investments' && tx.category !== 'Savings';
+    const fallback = expenseCats.find(c => c !== 'Investments' && c !== 'Savings') || expenseCats[0] || 'Groceries';
+    return { ...tx, kind: 'expense', category: keep ? tx.category : fallback };
+};
+
 const EXPENSE_CATS = DEFAULT_EXPENSE_CATS;
 const INCOME_CATS = DEFAULT_INCOME_CATS;
 const ALL_CATS = Array.from(new Set([...EXPENSE_CATS, ...INCOME_CATS])).sort();
@@ -1222,6 +1269,9 @@ export default function App() {
     }));
     const [inlineBusy, setInlineBusy] = useState(false);
     const [inlineError, setInlineError] = useState('');
+    const inlineType = txTypeOf(inlineTx);
+    const inlineTypeMeta = txTypeMeta(inlineType);
+    const inlineCatOptions = categoriesForType(inlineType, expenseCats, incomeCats);
 
     const handleSaveInlineTx = async e => {
         if (e) e.preventDefault();
@@ -1236,13 +1286,14 @@ export default function App() {
             const payload = {
                 kind: inlineTx.kind,
                 amount: amt,
-                category: inlineTx.category || (inlineTx.kind === 'income' ? incomeCats[0] : expenseCats[0]),
+                category: inlineTx.category || categoriesForType(inlineType, expenseCats, incomeCats)[0],
                 description: inlineTx.description.trim() || inlineTx.category,
                 payment_method: inlineTx.payment_method || paymentMethods[0] || 'SBI',
                 txn_date: inlineTx.txn_date || today(),
             };
             await api.post('/transactions', payload);
-            logActivity(`Added ${payload.kind} of ₹${payload.amount.toLocaleString('en-IN')} in ${payload.category}`, 'money');
+            const addedType = txTypeMeta(txTypeOf(payload)).label.toLowerCase();
+            logActivity(`Added ${addedType} of ₹${payload.amount.toLocaleString('en-IN')} in ${payload.category}`, 'money');
             // Keep date, payment, category, kind for rapid entry; reset amount and description
             setInlineTx(prev => ({
                 ...prev,
@@ -2142,38 +2193,23 @@ export default function App() {
                                             onKeyDown={e => {
                                                 if (e.altKey && (e.key === 'e' || e.key === 'E')) {
                                                     e.preventDefault();
-                                                    setInlineTx(prev => ({
-                                                        ...prev,
-                                                        kind: 'expense',
-                                                        category: expenseCats.includes(prev.category) ? prev.category : (expenseCats[0] || 'Groceries')
-                                                    }));
+                                                    setInlineTx(prev => withTxType(prev, 'expense', expenseCats, incomeCats));
                                                 } else if (e.altKey && (e.key === 'i' || e.key === 'I')) {
                                                     e.preventDefault();
-                                                    setInlineTx(prev => ({
-                                                        ...prev,
-                                                        kind: 'income',
-                                                        category: incomeCats.includes(prev.category) ? prev.category : (incomeCats[0] || 'Salary')
-                                                    }));
+                                                    setInlineTx(prev => withTxType(prev, 'income', expenseCats, incomeCats));
                                                 }
                                             }}
                                         >
-                                            <button
-                                                type="button"
-                                                className={`min-type-btn ${inlineTx.kind === 'expense' ? 'is-exp' : 'is-inc'}`}
-                                                onClick={() => setInlineTx(prev => {
-                                                    const kind = prev.kind === 'expense' ? 'income' : 'expense';
-                                                    const pool = kind === 'expense' ? expenseCats : incomeCats;
-                                                    return {
-                                                        ...prev,
-                                                        kind,
-                                                        category: pool.includes(prev.category) ? prev.category : (pool[0] || ''),
-                                                    };
-                                                })}
-                                                title="Switch between expense and income"
-                                            >
-                                                {inlineTx.kind === 'expense' ? <ArrowUpRight size={13} /> : <ArrowDownLeft size={13} />}
-                                                <span>{inlineTx.kind === 'expense' ? 'Expense' : 'Income'}</span>
-                                            </button>
+                                            <div className={`min-field field-type is-${inlineType}`}>
+                                                <CustomSelect
+                                                    value={inlineType}
+                                                    onChange={type => setInlineTx(prev => withTxType(prev, type, expenseCats, incomeCats))}
+                                                    options={TX_TYPES.map(t => ({ value: t.id, label: t.label }))}
+                                                    icon={inlineTypeMeta.icon}
+                                                    placeholder="Type"
+                                                    fullWidth
+                                                />
+                                            </div>
 
                                             <div className="min-field field-amount">
                                                 <span className="min-curr">₹</span>
@@ -2193,7 +2229,7 @@ export default function App() {
                                                 <CustomSelect
                                                     value={inlineTx.category}
                                                     onChange={val => setInlineTx(prev => ({ ...prev, category: val }))}
-                                                    options={inlineTx.kind === 'income' ? incomeCats : expenseCats}
+                                                    options={inlineCatOptions}
                                                     placeholder="Category"
                                                     fullWidth
                                                 />
@@ -3295,16 +3331,9 @@ function Modal({
     expenseCats, incomeCats, paymentMethods, onOpenManage,
 }) {
     const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-    const setType = newKind => {
-        const defaultCat = newKind === 'income' ? (incomeCats[0] || 'Salary') : (expenseCats[0] || 'Groceries');
-        setForm(prev => ({
-            ...prev,
-            kind: newKind,
-            category: defaultCat,
-        }));
-    };
-
-    const catOptions = form.kind === 'income' ? incomeCats : expenseCats;
+    const formType = txTypeOf(form);
+    const setType = type => setForm(prev => withTxType(prev, type, expenseCats, incomeCats));
+    const catOptions = categoriesForType(formType, expenseCats, incomeCats);
 
     return (
         <div className="overlay" onMouseDown={e => e.target === e.currentTarget && close()}>
@@ -3322,20 +3351,16 @@ function Modal({
                         <div className="form-group">
                             <span className="form-label">Transaction Type</span>
                             <div className="type-toggle">
-                                <button
-                                    type="button"
-                                    className={`type-btn ${form.kind === 'expense' ? 'active is-expense' : ''}`}
-                                    onClick={() => setType('expense')}
-                                >
-                                    <ArrowUpRight size={16} /> Expense
-                                </button>
-                                <button
-                                    type="button"
-                                    className={`type-btn ${form.kind === 'income' ? 'active is-income' : ''}`}
-                                    onClick={() => setType('income')}
-                                >
-                                    <ArrowDownLeft size={16} /> Income
-                                </button>
+                                {TX_TYPES.map(({ id, label, icon: Icon }) => (
+                                    <button
+                                        key={id}
+                                        type="button"
+                                        className={`type-btn ${formType === id ? `active is-${id}` : ''}`}
+                                        onClick={() => setType(id)}
+                                    >
+                                        <Icon size={16} /> {label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
@@ -3359,7 +3384,7 @@ function Modal({
                                     type="button"
                                     className="link"
                                     style={{ fontSize: '11px', textDecoration: 'none' }}
-                                    onClick={() => onOpenManage(form.kind === 'income' ? 'income' : 'expense')}
+                                    onClick={() => onOpenManage(formType === 'income' ? 'income' : 'expense')}
                                 >
                                     + Add / Remove
                                 </button>
@@ -3974,12 +3999,16 @@ function InlineTxEditor({
         return () => clearTimeout(id);
     }, []);
 
-    const cats = tx.kind === 'income' ? incomeCats : expenseCats;
+    const type = txTypeOf(tx);
+    const typeMeta = txTypeMeta(type);
+    const TypeIcon = typeMeta.icon;
+    const cats = categoriesForType(type, expenseCats, incomeCats);
     const set = (k, v) => setTx(prev => ({ ...prev, [k]: v }));
-    const setKind = kind => setTx(prev => {
-        const pool = kind === 'income' ? incomeCats : expenseCats;
-        return { ...prev, kind, category: pool.includes(prev.category) ? prev.category : (pool[0] || '') };
-    });
+    const setKind = nextType => setTx(prev => withTxType(prev, nextType, expenseCats, incomeCats));
+    const nextType = () => {
+        const order = ['expense', 'income', 'investment', 'savings'];
+        return order[(order.indexOf(type) + 1) % order.length];
+    };
 
     const onKeyDown = e => {
         if (e.key === 'Enter') {
@@ -4008,11 +4037,11 @@ function InlineTxEditor({
     const kindButton = (
         <button
             type="button"
-            className={`tx-inline-kind ${tx.kind === 'income' ? 'is-inc' : 'is-exp'}`}
-            onClick={() => setKind(tx.kind === 'income' ? 'expense' : 'income')}
-            title={`Switch to ${tx.kind === 'income' ? 'expense' : 'income'}`}
+            className={`tx-inline-kind is-${type}`}
+            onClick={() => setKind(nextType())}
+            title={`Switch to ${txTypeMeta(nextType()).label}`}
         >
-            {tx.kind === 'income' ? <ArrowDownLeft size={13} /> : <ArrowUpRight size={13} />}
+            <TypeIcon size={13} />
         </button>
     );
 
@@ -4060,7 +4089,7 @@ function InlineTxEditor({
                 className="icon-btn save-btn"
                 onClick={onSave}
                 disabled={busy || !tx.amount}
-                title="Save changes (Enter)"
+                title="Save changes"
             >
                 <Check size={13} />
             </button>
@@ -4090,21 +4119,15 @@ function InlineTxEditor({
                         }
                     }}
                 >
-                    <div className="min-type-toggle">
-                        <button
-                            type="button"
-                            className={`min-type-btn ${tx.kind === 'expense' ? 'is-exp' : ''}`}
-                            onClick={() => setKind('expense')}
-                        >
-                            <ArrowUpRight size={13} /><span>Expense</span>
-                        </button>
-                        <button
-                            type="button"
-                            className={`min-type-btn ${tx.kind === 'income' ? 'is-inc' : ''}`}
-                            onClick={() => setKind('income')}
-                        >
-                            <ArrowDownLeft size={13} /><span>Income</span>
-                        </button>
+                    <div className={`min-field field-type is-${type}`}>
+                        <CustomSelect
+                            value={type}
+                            onChange={setKind}
+                            options={TX_TYPES.map(t => ({ value: t.id, label: t.label }))}
+                            icon={TypeIcon}
+                            placeholder="Type"
+                            fullWidth
+                        />
                     </div>
 
                     <div className="min-field field-amount">
@@ -4124,7 +4147,7 @@ function InlineTxEditor({
                         type="submit"
                         className="blue min-save-btn"
                         disabled={busy || !tx.amount}
-                        title="Save changes (Enter)"
+                        title="Save changes"
                     >
                         <Check size={14} />
                         <span>{busy ? '…' : 'Save'}</span>

@@ -8415,3 +8415,63 @@ main > header .topbar-search {
     transform: none;
   }
 }
+
+/* ==========================================================================
+   TRANSACTION TYPE — one rectangular control, four choices
+   The type box uses the same CustomSelect trigger as Category and Payment, so
+   it lines up with every other placeholder box in the quick-add row. Only the
+   leading icon is tinted; the surface stays neutral.
+   ========================================================================== */
+
+@media (min-width: 641px) {
+  .inline-tx-form-compact .min-field.field-type {
+    flex: 0 1 132px;
+    min-width: 120px;
+  }
+}
+
+.field-type .trigger-icon svg {
+  color: var(--muted-foreground);
+}
+
+.field-type.is-expense .trigger-icon svg {
+  color: var(--danger);
+}
+
+.field-type.is-income .trigger-icon svg {
+  color: var(--success-soft-foreground);
+}
+
+.field-type.is-investment .trigger-icon svg {
+  color: var(--chart-4);
+}
+
+.field-type.is-savings .trigger-icon svg {
+  color: var(--chart-3);
+}
+
+/* The four-up switch in the add dialog. */
+.type-btn.active.is-investment {
+  color: var(--chart-4) !important;
+}
+
+.type-btn.active.is-savings {
+  color: var(--chart-3) !important;
+}
+
+/* The in-row editor keeps its 26px box and cycles the four types. */
+.tx-inline-kind.is-expense {
+  color: var(--danger) !important;
+}
+
+.tx-inline-kind.is-income {
+  color: var(--success-soft-foreground) !important;
+}
+
+.tx-inline-kind.is-investment {
+  color: var(--chart-4) !important;
+}
+
+.tx-inline-kind.is-savings {
+  color: var(--chart-3) !important;
+}
