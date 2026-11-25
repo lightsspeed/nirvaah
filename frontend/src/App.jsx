@@ -127,6 +127,8 @@ const txTypeOf = tx => {
     return 'expense';
 };
 const txTypeMeta = type => TX_TYPE_BY_ID[type] || TX_TYPE_BY_ID.expense;
+const TX_TYPE_ORDER = ['expense', 'income', 'investment', 'savings'];
+const nextTxType = type => TX_TYPE_ORDER[(TX_TYPE_ORDER.indexOf(type) + 1) % TX_TYPE_ORDER.length];
 
 const categoriesForType = (type, expenseCats, incomeCats) => {
     if (type === 'income') return incomeCats;
@@ -1293,6 +1295,7 @@ export default function App() {
     const [inlineError, setInlineError] = useState('');
     const inlineType = txTypeOf(inlineTx);
     const inlineTypeMeta = txTypeMeta(inlineType);
+    const InlineTypeIcon = inlineTypeMeta.icon;
     const inlineCatOptions = categoriesForType(inlineType, expenseCats, incomeCats);
 
     const handleSaveInlineTx = async e => {
@@ -2245,16 +2248,15 @@ export default function App() {
                                                 }
                                             }}
                                         >
-                                            <div className={`min-field field-type is-${inlineType}`}>
-                                                <CustomSelect
-                                                    value={inlineType}
-                                                    onChange={type => setInlineTx(prev => withTxType(prev, type, expenseCats, incomeCats))}
-                                                    options={TX_TYPES.map(t => ({ value: t.id, label: t.label }))}
-                                                    icon={inlineTypeMeta.icon}
-                                                    placeholder="Type"
-                                                    fullWidth
-                                                />
-                                            </div>
+                                            <button
+                                                type="button"
+                                                className={`min-field field-type tx-type-button is-${inlineType}`}
+                                                onClick={() => setInlineTx(prev => withTxType(prev, nextTxType(inlineType), expenseCats, incomeCats))}
+                                                title={`Switch to ${txTypeMeta(nextTxType(inlineType)).label}`}
+                                            >
+                                                <InlineTypeIcon size={14} />
+                                                <span>{inlineTypeMeta.label}</span>
+                                            </button>
 
                                             <div className="min-field field-amount">
                                                 <span className="min-curr">₹</span>
@@ -4228,16 +4230,15 @@ function InlineTxEditor({
                         }
                     }}
                 >
-                    <div className={`min-field field-type is-${type}`}>
-                        <CustomSelect
-                            value={type}
-                            onChange={setKind}
-                            options={TX_TYPES.map(t => ({ value: t.id, label: t.label }))}
-                            icon={TypeIcon}
-                            placeholder="Type"
-                            fullWidth
-                        />
-                    </div>
+                    <button
+                        type="button"
+                        className={`min-field field-type tx-type-button is-${type}`}
+                        onClick={() => setKind(nextTxType(type))}
+                        title={`Switch to ${txTypeMeta(nextTxType(type)).label}`}
+                    >
+                        <TypeIcon size={14} />
+                        <span>{typeMeta.label}</span>
+                    </button>
 
                     <div className="min-field field-amount">
                         <span className="min-curr">₹</span>

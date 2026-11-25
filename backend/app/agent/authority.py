@@ -24,7 +24,8 @@ from .resolve import normalise
 NOUNS: dict[str, re.Pattern] = {
     "transaction": re.compile(
         r"\b(expenses?|transactions?|spends?|spending|payments?|income|salar(?:y|ies)|"
-        r"earnings?|refunds?|credits?|debits?)\b"),
+        r"earnings?|refunds?|credits?|debits?|investments?|invest|sips?|mutual funds?|"
+        r"stocks?|savings?|emergency fund|transfers?)\b"),
     "task": re.compile(r"\b(tasks?|to dos?|todos?|reminders?|remind)\b"),
     "note": re.compile(r"\b(notes?|jot)\b"),
     "journal": re.compile(r"\b(journal|diary|log)\b"),
@@ -43,7 +44,7 @@ LABELS = {
 # A verb that asks for something to be written down.
 VERB = re.compile(
     r"\b(add|create|record|log|enter|save|note|jot|track|register|schedule|remind|make|set|"
-    r"start|open|new)\b")
+    r"start|open|new|invest|transfer|move)\b")
 
 # "add up", "sum up", "break down" are arithmetic, not a request to create.
 SUM_IDIOM = re.compile(r"\b(?:add|sum|count)\s+(?:it\s+|them\s+)?up\b|\bbreak\s+down\b")
@@ -53,8 +54,8 @@ SUM_IDIOM = re.compile(r"\b(?:add|sum|count)\s+(?:it\s+|them\s+)?up\b|\bbreak\s+
 # is only trusted for the verbs that cannot open a question about money.
 REPORT = re.compile(
     r"^\s*(?:please\s+|ok\s+|so\s+)?(?:"
-    r"(?:i|we)\s+(?:spent|paid|bought|earned|received|got|made)\b"
-    r"|(?:spent|paid|bought|earned|received)\b)")
+    r"(?:i|we)\s+(?:spent|paid|bought|earned|received|got|made|invested|saved|transferred|moved)\b"
+    r"|(?:spent|paid|bought|earned|received|invested|saved|transferred|moved)\b)")
 
 # A message that opens as a question asks for an answer, not for a record.
 QUESTION = re.compile(

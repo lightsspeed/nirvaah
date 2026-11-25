@@ -170,7 +170,7 @@ _WRITE_LEAD = re.compile(
     r"^\s*(?:(?:and|then|also|now|please|ok|okay|hey)\s+)*"
     r"(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
     r"(?:add|create|update|change|move|reschedule|delete|remove|complete|mark|set|rename|remember|"
-    r"log|make)\b", re.I)
+    r"log|make|invest|transfer)\b", re.I)
 _WRITE_IDIOM = re.compile(r"\b(?:add|sum|count)\s+up\b|\bbreak\s+down\b", re.I)
 # "I spent ₹1,500 on groceries today." — in a bookkeeping assistant a first-person
 # report of money moving *is* the write. It needs a subject, a money verb and an
@@ -178,7 +178,7 @@ _WRITE_IDIOM = re.compile(r"\b(?:add|sum|count)\s+up\b|\bbreak\s+down\b", re.I)
 _MONEY_REPORT = re.compile(
     r"^\s*(?:please\s+|ok\s+|okay\s+|so\s+|and\s+|also\s+)*"
     r"(?:i|we)\s+(?:(?:just|also|recently|already|have|had|finally)\s+)*"
-    r"(?:spent|paid|bought|purchased|earned|received|got\s+paid|sold|withdrew|deposited|made)\b"
+    r"(?:spent|paid|bought|purchased|earned|received|got\s+paid|sold|withdrew|deposited|made|invested|saved|transferred|moved)\b"
     r"[^0-9]{0,40}\d",
     re.I)
 _ANALYTICS_MARKER = re.compile(
@@ -258,7 +258,7 @@ CONTEXT_TTL_TURNS = 6
 # user clearly asked for.
 _WRITE_CUE = re.compile(
     r"\b(add|create|update|change|move|reschedule|delete|remove|complete|mark|set|rename|"
-    r"remember|make|assign|log)\b", re.I)
+    r"remember|make|assign|log|invest|transfer)\b", re.I)
 
 # "compare Groceries vs Dining Out", "which is higher, Fuel or Electricity?"
 _COMPARE_CUE = re.compile(

@@ -8430,23 +8430,54 @@ main > header .topbar-search {
   }
 }
 
-.field-type .trigger-icon svg {
-  color: var(--muted-foreground);
+/* Clickable type box: one rectangle, four states, same metrics as the other
+   placeholder boxes. Clicking cycles Expense → Income → Investments → Savings. */
+.tx-type-button {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  height: var(--control-h) !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--input) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-body) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500 !important;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
 }
 
-.field-type.is-expense .trigger-icon svg {
+.tx-type-button:hover {
+  background: var(--accent) !important;
+  border-color: var(--ring) !important;
+}
+
+.tx-type-button svg {
+  flex: 0 0 auto;
+}
+
+.tx-type-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-type.is-expense svg {
   color: var(--danger);
 }
 
-.field-type.is-income .trigger-icon svg {
+.field-type.is-income svg {
   color: var(--success-soft-foreground);
 }
 
-.field-type.is-investment .trigger-icon svg {
+.field-type.is-investment svg {
   color: var(--chart-4);
 }
 
-.field-type.is-savings .trigger-icon svg {
+.field-type.is-savings svg {
   color: var(--chart-3);
 }
 

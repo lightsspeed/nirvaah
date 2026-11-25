@@ -41,6 +41,10 @@ from . import resolve as resolver
 from .fields import as_plain, date_value, inr, month, num, tags, text
 
 WRITE_OPS = {"add", "update", "delete"}
+TRANSACTION_KINDS = ("income", "expense", "investment", "savings")
+# An investment or savings contribution needs a place by default; the user can
+# name a different asset/place and the model passes it through.
+KIND_DEFAULT_CATEGORY = {"investment": "Mutual Fund", "savings": "Emergency Fund"}
 
 
 @dataclass
@@ -82,23 +86,28 @@ def _transaction_fields(action: dict, *, creating: bool, context: dict | None = 
     fields: dict = {}
     if creating:
         kind = text(action, "kind", "expense").lower()
-        if kind not in ("income", "expense"):
-            raise ValueError("A transaction is either income or expense.")
+        if kind not in TRANSACTION_KINDS:
+            raise ValueError("A transaction is income, expense, investment or savings.")
         fields["kind"] = kind
         amount = to_money(num(action, "amount"))
         if amount <= ZERO:
             raise ValueError("A transaction needs an amount greater than zero.")
         fields["amount"] = amount
-        fields["category"] = text(action, "category", "Other") or "Other"
+        default_category = KIND_DEFAULT_CATEGORY.get(kind, "Other")
+        fields["category"] = text(action, "category", default_category) or default_category
         fields["description"] = text(action, "description")
         fields["payment_method"] = text(action, "payment_method", "SBI") or "SBI"
         fields["txn_date"] = date_value(action, "txn_date", _business_today(context))
         return fields
     if "kind" in action:
         kind = text(action, "kind").lower()
-        if kind not in ("income", "expense"):
-            raise ValueError("A transaction is either income or expense.")
+        if kind not in TRANSACTION_KINDS:
+            raise ValueError("A transaction is income, expense, investment or savings.")
         fields["kind"] = kind
+        # Changing kind without naming a category should not leave an expense
+        # category on an investment (or the reverse).
+        if kind in KIND_DEFAULT_CATEGORY and "category" not in action:
+            fields["category"] = KIND_DEFAULT_CATEGORY[kind]
     if "amount" in action:
         amount = to_money(num(action, "amount"))
         if amount <= ZERO:
