@@ -25,6 +25,10 @@ from .agent.tasks import set_done
 
 Base.metadata.create_all(bind=engine)
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
+# income and expense move cash; investment and savings move it to an asset.
+# The four are stored on the transaction so reports and the Investments and
+# Savings pages can separate them without guessing from a category name.
+TRANSACTION_KINDS = {"income", "expense", "investment", "savings"}
 app = FastAPI(title="Nirvaah API", version=APP_VERSION)
 app.include_router(assistant_router)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -195,6 +199,8 @@ def dashboard(
     txns = q.all()
     income = money.total(t.amount for t in txns if t.kind == "income")
     expenses = money.total(t.amount for t in txns if t.kind == "expense")
+    invested = money.total(t.amount for t in txns if t.kind == "investment")
+    saved = money.total(t.amount for t in txns if t.kind == "savings")
     by_category = {}
     for t in txns:
         if t.kind == "expense":
@@ -215,6 +221,11 @@ def dashboard(
         "month": month or budget_month,
         "income": money.number(income),
         "expenses": money.number(expenses),
+        # Contributions booked from the Investments / Savings types this period.
+        # They are not expenses, so they stay out of `expenses` and the category
+        # breakdown, but they are still money set aside.
+        "invested": money.number(invested),
+        "saved": money.number(saved),
         "savings": money.number(income - expenses),
         "savings_rate": round(float((income - expenses) / income * 100), 1) if income else 0,
         "investment_value": money.number(money.total(i.current_value for i in investments)),
@@ -257,7 +268,7 @@ def list_transactions(
         # Default: current month
         q = q.filter(*month_conditions(today.strftime("%Y-%m")))
     
-    if kind and kind.lower() in ("income", "expense"):
+    if kind and kind.lower() in TRANSACTION_KINDS:
         q = q.filter(models.Transaction.kind == kind.lower())
     if category and category.lower() != "all":
         q = q.filter(models.Transaction.category == category)
@@ -269,14 +280,14 @@ def list_transactions(
 
 @app.post("/api/transactions")
 def create_transaction(data: schemas.TransactionIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    if data.kind not in ("income", "expense"): raise HTTPException(400, "kind must be income or expense")
+    if data.kind not in TRANSACTION_KINDS: raise HTTPException(400, "kind must be income, expense, investment or savings")
     item = models.Transaction(user_id=user.id, **data.model_dump())
     db.add(item); db.commit(); db.refresh(item); return txn_dict(item)
 
 @app.put("/api/transactions/{item_id}")
 def update_transaction(item_id: int, data: schemas.TransactionIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
     item = owned(db, models.Transaction, item_id, user)
-    if data.kind not in ("income", "expense"): raise HTTPException(400, "kind must be income or expense")
+    if data.kind not in TRANSACTION_KINDS: raise HTTPException(400, "kind must be income, expense, investment or savings")
     for k,v in data.model_dump().items(): setattr(item,k,v)
     db.commit(); db.refresh(item); return txn_dict(item)
 

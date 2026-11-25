@@ -88,13 +88,9 @@ const getCurrentMonthRange = () => ({ preset: 'this_month', ...monthRange(new Da
 const DEFAULT_EXPENSE_CATS = [
     'Car Maintenance', 'Clothes', 'Dining Out', 'Doctor Visits', 'Education',
     'Electricity', 'Entertainment', 'Fuel', 'Gas', 'Groceries', 'Grooming',
-    'Health Insurance', 'Hobbies', 'Household Items', 'Investments', 'Medications', 'Misc',
-    'Mobile Bills', 'Office eats', 'Savings', 'Subscription', 'Travel', 'Other',
+    'Health Insurance', 'Hobbies', 'Household Items', 'Medications', 'Misc',
+    'Mobile Bills', 'Office eats', 'Subscription', 'Travel', 'Other',
 ];
-// Categories added to the defaults after a user already saved their own list.
-// They are merged into the saved list on load, once, so a customised list is
-// never reset just to make the new options appear.
-const EXPENSE_CATEGORY_ADDITIONS = ['Investments', 'Savings'];
 const DEFAULT_INCOME_CATS = ['Salary', 'Interest', 'Transferred', 'Stocks', 'Freelance', 'Other'];
 const DEFAULT_PAYMENT_METHODS = ['SBI', 'HDFC', 'Cash', 'Debit Card', 'Credit Card', 'Net Banking', 'Bank Transfer', 'Other'];
 
@@ -113,8 +109,19 @@ const TX_TYPES = [
 ];
 const TX_TYPE_BY_ID = Object.fromEntries(TX_TYPES.map(t => [t.id, t]));
 
+// Investments and savings are stored as their own kinds, so their categories
+// are asset-shaped rather than the expense categories. The old first-release
+// labels stay in each list so rows created under the previous mapping still
+// render and edit cleanly.
+const INVESTMENT_ASSET_TYPES = ['Mutual Fund', 'Stocks', 'ETF', 'Fixed Deposit', 'PPF', 'NPS', 'Gold', 'Real Estate', 'Other'];
+const INVESTMENT_CATEGORIES = [...INVESTMENT_ASSET_TYPES, 'Investments'];
+const SAVINGS_CATEGORIES = ['Emergency Fund', 'Fixed Deposit', 'Recurring Deposit', 'PPF', 'Savings Account', 'Savings', 'Other'];
+
 const txTypeOf = tx => {
+    if (tx?.kind === 'investment') return 'investment';
+    if (tx?.kind === 'savings') return 'savings';
     if (tx?.kind === 'income') return 'income';
+    // Rows written by the first four-type release were tracked as expenses.
     if (tx?.category === 'Investments') return 'investment';
     if (tx?.category === 'Savings') return 'savings';
     return 'expense';
@@ -123,9 +130,8 @@ const txTypeMeta = type => TX_TYPE_BY_ID[type] || TX_TYPE_BY_ID.expense;
 
 const categoriesForType = (type, expenseCats, incomeCats) => {
     if (type === 'income') return incomeCats;
-    if (type === 'investment' || type === 'savings') {
-        return Array.from(new Set([...expenseCats, ...incomeCats, 'Investments', 'Savings'])).sort();
-    }
+    if (type === 'investment') return INVESTMENT_CATEGORIES;
+    if (type === 'savings') return SAVINGS_CATEGORIES;
     return expenseCats;
 };
 
@@ -137,11 +143,22 @@ const withTxType = (tx, type, expenseCats, incomeCats) => {
             category: incomeCats.includes(tx.category) ? tx.category : (incomeCats[0] || 'Salary'),
         };
     }
-    if (type === 'investment' || type === 'savings') {
-        return { ...tx, kind: 'expense', category: type === 'investment' ? 'Investments' : 'Savings' };
+    if (type === 'investment') {
+        return {
+            ...tx,
+            kind: 'investment',
+            category: INVESTMENT_CATEGORIES.includes(tx.category) ? tx.category : 'Mutual Fund',
+        };
+    }
+    if (type === 'savings') {
+        return {
+            ...tx,
+            kind: 'savings',
+            category: SAVINGS_CATEGORIES.includes(tx.category) ? tx.category : 'Emergency Fund',
+        };
     }
     const keep = expenseCats.includes(tx.category) && tx.category !== 'Investments' && tx.category !== 'Savings';
-    const fallback = expenseCats.find(c => c !== 'Investments' && c !== 'Savings') || expenseCats[0] || 'Groceries';
+    const fallback = expenseCats[0] || 'Groceries';
     return { ...tx, kind: 'expense', category: keep ? tx.category : fallback };
 };
 
@@ -1036,6 +1053,10 @@ export default function App() {
     const [cashflow, setCashflow] = useState([]);
     const [analytics, setAnalytics] = useState(null);
     const [txRange, setTxRange] = useState({ min_date: null, max_date: null, min: null, max: null, total_count: 0 });
+    // Investment and savings entries are listed on their own pages, across all
+    // time, so they do not depend on the month filter the transactions page uses.
+    const [investmentTxns, setInvestmentTxns] = useState([]);
+    const [savingsTxns, setSavingsTxns] = useState([]);
     const [cashflowRange, setCashflowRange] = useState(6);
     const [reportTrendView, setReportTrendView] = useState('trends'); // 'trends' | 'cashflow'
 
@@ -1177,8 +1198,9 @@ export default function App() {
             if (saved) {
                 const parsed = JSON.parse(saved);
                 if (Array.isArray(parsed)) {
-                    const missing = EXPENSE_CATEGORY_ADDITIONS.filter(c => !parsed.includes(c));
-                    return missing.length ? [...parsed, ...missing] : parsed;
+                    // The first four-type release parked these under expenses;
+                    // they are their own kinds now, so keep them out of this list.
+                    return parsed.filter(c => c !== 'Investments' && c !== 'Savings');
                 }
             }
         } catch { }
@@ -1324,7 +1346,9 @@ export default function App() {
         setEditError('');
         setEditingTx({
             id: t.id,
-            kind: t.kind || 'expense',
+            // Derive the type so a row written before the kinds were split is
+            // normalised when it is saved again.
+            kind: txTypeOf(t),
             amount: t.amount,
             category: t.category,
             description: t.description || '',
@@ -1365,7 +1389,8 @@ export default function App() {
                 txn_date: editingTx.txn_date,
             };
             await api.put(`/transactions/${editingTx.id}`, payload);
-            logActivity(`Updated ${payload.kind} of ₹${payload.amount.toLocaleString('en-IN')} in ${payload.category}`, 'money');
+            const updatedType = txTypeMeta(txTypeOf(payload)).label.toLowerCase();
+            logActivity(`Updated ${updatedType} of ₹${payload.amount.toLocaleString('en-IN')} in ${payload.category}`, 'money');
             setEditingTx(null);
             load();
             loadTxRange();
@@ -1472,6 +1497,24 @@ export default function App() {
         baseURL: API,
         headers: token ? { Authorization: `Bearer ${token}`, ...timezoneHeader() } : timezoneHeader(),
     }), [token]);
+
+    // The Investments and Savings goals pages list their own entries across all
+    // time; the transactions page's month range does not apply to them.
+    useEffect(() => {
+        if (!token) return undefined;
+        let alive = true;
+        const fetchKind = async (kind, setter) => {
+            try {
+                const r = await api.get('/transactions', { params: { kind, month: 'all' } });
+                if (alive) setter(Array.isArray(r.data) ? r.data : []);
+            } catch {
+                if (alive) setter([]);
+            }
+        };
+        if (page === 'Investments') fetchKind('investment', setInvestmentTxns);
+        else if (page === 'Savings goals') fetchKind('savings', setSavingsTxns);
+        return () => { alive = false; };
+    }, [page, token, api, tx]);
 
     const logout = () => {
         localStorage.removeItem('moneta_token');
@@ -1909,6 +1952,8 @@ export default function App() {
                                             { value: 'All', label: 'All types' },
                                             { value: 'Expense', label: 'Expenses only' },
                                             { value: 'Income', label: 'Income only' },
+                                            { value: 'Investment', label: 'Investments only' },
+                                            { value: 'Savings', label: 'Savings only' },
                                         ]}
                                         placeholder="Type"
                                     />
@@ -2481,6 +2526,38 @@ export default function App() {
                                     </tbody>
                                 </table>
                             </div>
+
+                            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginTop: 28 }}>
+                                <div>
+                                    <h2 style={{ marginBottom: 4 }}>Savings transactions</h2>
+                                    <p className="muted" style={{ marginBottom: 16 }}>Money moved aside from Add transaction.</p>
+                                </div>
+                                <div className="muted" style={{ marginBottom: 16 }}>
+                                    All-time set aside <b className="sav-text">{money(savingsTxns.reduce((sum, t) => sum + Number(t.amount || 0), 0))}</b>
+                                </div>
+                            </div>
+                            <div className="table-wrap">
+                                <table>
+                                    <thead><tr><th>Date</th><th>Where</th><th>Description</th><th>Payment</th><th>Amount</th><th></th></tr></thead>
+                                    <tbody>
+                                        {savingsTxns.length ? savingsTxns.map(t => (
+                                            <tr key={t.id}>
+                                                <td>{new Date(t.txn_date + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                                <td><span className="cat-badge">{t.category}</span></td>
+                                                <td>{t.description || t.category}</td>
+                                                <td>{t.payment_method}</td>
+                                                <td><b className="sav-text">−{money(t.amount)}</b></td>
+                                                <td><button className="icon-btn" title="Delete savings transaction" onClick={() => del('transactions', t.id)}><Trash2 size={14} /></button></td>
+                                            </tr>
+                                        )) : <tr><td colSpan={6}>
+                                            <div className="empty">
+                                                <b>No savings entries yet</b>
+                                                <span>Record a transfer from Transactions with the Savings type.</span>
+                                            </div>
+                                        </td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
                         </section>
                     )}
 
@@ -2512,6 +2589,38 @@ export default function App() {
                                             <div className="empty">
                                                 <b>No investments recorded yet</b>
                                                 <span>Add holdings manually to track what you own and what it cost.</span>
+                                            </div>
+                                        </td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginTop: 28 }}>
+                                <div>
+                                    <h2 style={{ marginBottom: 4 }}>Investment transactions</h2>
+                                    <p className="muted" style={{ marginBottom: 16 }}>Contributions recorded from Add transaction.</p>
+                                </div>
+                                <div className="muted" style={{ marginBottom: 16 }}>
+                                    All-time contributions <b className="inv-text">{money(investmentTxns.reduce((sum, t) => sum + Number(t.amount || 0), 0))}</b>
+                                </div>
+                            </div>
+                            <div className="table-wrap">
+                                <table>
+                                    <thead><tr><th>Date</th><th>Asset type</th><th>Description</th><th>Payment</th><th>Amount</th><th></th></tr></thead>
+                                    <tbody>
+                                        {investmentTxns.length ? investmentTxns.map(t => (
+                                            <tr key={t.id}>
+                                                <td>{new Date(t.txn_date + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                                <td><span className="cat-badge">{t.category}</span></td>
+                                                <td>{t.description || t.category}</td>
+                                                <td>{t.payment_method}</td>
+                                                <td><b className="inv-text">−{money(t.amount)}</b></td>
+                                                <td><button className="icon-btn" title="Delete investment transaction" onClick={() => del('transactions', t.id)}><Trash2 size={14} /></button></td>
+                                            </tr>
+                                        )) : <tr><td colSpan={6}>
+                                            <div className="empty">
+                                                <b>No investment entries yet</b>
+                                                <span>Record a contribution from Transactions with the Investments type.</span>
                                             </div>
                                         </td></tr>}
                                     </tbody>
@@ -3509,7 +3618,7 @@ function Modal({
                             <CustomSelect
                                 value={form.asset_type || 'Mutual Fund'}
                                 onChange={v => set('asset_type', v)}
-                                options={['Mutual Fund', 'Stocks', 'ETF', 'Fixed Deposit', 'PPF', 'NPS', 'Gold', 'Real Estate', 'Other']}
+                                options={INVESTMENT_ASSET_TYPES}
                                 fullWidth
                             />
                         </div>

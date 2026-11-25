@@ -142,9 +142,14 @@ def _month_buckets(db: Session, user, *, start: date | None = None, end: date | 
     """Income/expense/count per month, summed in SQL and rounded here."""
     month = month_expr(db)
     bucket = kind_bucket_expr()
+    query = _filtered(db, user, start=start, end=end, kind=kind, categories=categories_in)
+    if kind is None:
+        # Investment and savings contributions are not spending; a spend/income
+        # summary must not count them as an expense while it has no place to
+        # report them. The app's own Investments/Savings pages cover them.
+        query = query.filter(models.Transaction.kind.in_(("income", "expense")))
     rows = (
-        _filtered(db, user, start=start, end=end, kind=kind, categories=categories_in)
-        .with_entities(
+        query.with_entities(
             month.label("month"),
             bucket.label("bucket"),
             func.sum(models.Transaction.amount),

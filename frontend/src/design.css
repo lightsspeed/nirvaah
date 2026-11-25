@@ -8475,3 +8475,12 @@ main > header .topbar-search {
 .tx-inline-kind.is-savings {
   color: var(--chart-3) !important;
 }
+
+/* Investment and savings money keeps its own tone in lists and on its page. */
+.inv-text {
+  color: var(--chart-4) !important;
+}
+
+.sav-text {
+  color: var(--chart-3) !important;
+}
