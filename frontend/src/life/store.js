@@ -220,12 +220,24 @@ const keepCategory = (value, fallback) => {
     return text || fallback;
 };
 
+// Attachment metadata is owned by the API; the client only has to keep it
+// intact across reads, edits and syncs. Blobs are fetched separately.
+const normalizeAttachments = value => (Array.isArray(value) ? value : [])
+    .filter(a => a && typeof a === 'object' && a.id)
+    .map(a => ({
+        id: String(a.id),
+        name: String(a.name || 'Attachment'),
+        mime: String(a.mime || 'application/octet-stream'),
+        size: Number(a.size) || 0,
+    }));
+
 export const normalizeNote = n => ({
     id: n.id ?? uid(),
     title: (n.title || '').trim() || 'Untitled note',
     body: n.body ?? n.content ?? '',
     category: keepCategory(n.category, 'Personal'),
     tags: Array.isArray(n.tags) ? n.tags.filter(Boolean) : [],
+    attachments: normalizeAttachments(n.attachments),
     pinned: !!n.pinned,
     archived: !!n.archived,
     createdAt: n.createdAt || parseDate(n.date) || Date.now(),
@@ -238,6 +250,7 @@ export const normalizeTask = t => {
         id: t.id ?? uid(),
         text: (t.text || '').trim() || 'Untitled task',
         notes: t.notes || '',
+        attachments: normalizeAttachments(t.attachments),
         done: !!t.done,
         priority: ['high', 'medium', 'low'].includes(t.priority)
             ? t.priority
@@ -321,16 +334,19 @@ export function logActivity(action, type = 'system', detail = '') {
 
 const API = (import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:8001/api';
 
+/** Absolute URL for an API path, for the few calls that live outside this file. */
+export const apiUrl = path => `${API}${path.startsWith('/') ? path : `/${path}`}`;
+
 const ENDPOINTS = {
     [NOTES_KEY]: 'notes',
     [TASKS_KEY]: 'tasks',
     [EVENTS_KEY]: 'journal',
 };
 
-const authHeaders = () => {
+export const authHeaders = ({ json = true } = {}) => {
     const token = (typeof localStorage !== 'undefined' && localStorage.getItem('moneta_token')) || '';
     return {
-        'Content-Type': 'application/json',
+        ...(json ? { 'Content-Type': 'application/json' } : {}),
         ...timezoneHeader(),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };

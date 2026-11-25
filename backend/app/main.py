@@ -1,14 +1,16 @@
 import json
 import math
 import os
+import re
 import uuid
 from datetime import date, timedelta
 from calendar import monthrange
-from fastapi import FastAPI, Depends, HTTPException, Query
+from urllib.parse import quote
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -575,22 +577,175 @@ def _num(value):
         raise HTTPException(422, str(exc)) from exc
 
 
-def _note_out(n: models.Note):
+# ── Note / task attachments ────────────────────────────────────────────────
+# The bytes are stored in the attachments table; note and task payloads carry
+# only the metadata the UI needs, so listing a collection never loads a blob.
+MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+MAX_ATTACHMENTS_PER_RECORD = 12
+MAX_ATTACHMENTS_TOTAL_BYTES = 24 * 1024 * 1024
+ATTACHMENT_KINDS = {"note", "task"}
+SAFE_INLINE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+def _attachment_meta(a):
+    return {"id": a.id, "name": a.name, "mime": a.mime, "size": a.size}
+
+
+def _attachments_by_owner(db: Session, user, kind: str, owner_ids) -> dict[str, list]:
+    ids = [str(value) for value in owner_ids if value]
+    if not ids:
+        return {}
+    rows = (
+        db.query(
+            models.Attachment.id,
+            models.Attachment.owner_id,
+            models.Attachment.name,
+            models.Attachment.mime,
+            models.Attachment.size,
+        )
+        .filter(
+            models.Attachment.user_id == user.id,
+            models.Attachment.owner_kind == kind,
+            models.Attachment.owner_id.in_(ids),
+        )
+        .order_by(models.Attachment.created_at.asc())
+        .all()
+    )
+    grouped: dict[str, list] = {}
+    for row in rows:
+        grouped.setdefault(row.owner_id, []).append(
+            {"id": row.id, "name": row.name, "mime": row.mime, "size": row.size}
+        )
+    return grouped
+
+
+def _delete_attachments(db: Session, user, kind: str, owner_id: str) -> None:
+    db.query(models.Attachment).filter(
+        models.Attachment.user_id == user.id,
+        models.Attachment.owner_kind == kind,
+        models.Attachment.owner_id == owner_id,
+    ).delete(synchronize_session=False)
+
+
+def _touch_owner(db: Session, user, kind: str, owner_id: str) -> None:
+    """Attaching or removing a file changes the record, so other devices that
+    poll /sync/version must see a new stamp even when no field was edited."""
+    model = models.Note if kind == "note" else models.Task
+    row = db.get(model, owner_id)
+    if row and row.user_id == user.id:
+        row.updated_at = utcnow()
+
+
+def _note_out(n: models.Note, attachments: list | None = None):
     return {
         "id": n.id, "title": n.title, "body": n.body, "category": n.category,
         "tags": _from_tags(n.tags), "pinned": n.pinned, "archived": n.archived,
+        "attachments": attachments or [],
         "createdAt": iso_utc(n.created_at),
         "updatedAt": iso_utc(n.updated_at),
     }
 
 
-def _task_out(t: models.Task):
+def _task_out(t: models.Task, attachments: list | None = None):
     return {
         "id": t.id, "text": t.text, "notes": t.notes, "done": t.done,
         "priority": t.priority, "category": t.category, "due": _iso(t.due),
+        "attachments": attachments or [],
         "createdAt": iso_utc(t.created_at),
         "updatedAt": iso_utc(t.updated_at),
     }
+
+
+@app.post("/api/attachments")
+async def upload_attachment(
+    file: UploadFile = File(...),
+    owner_kind: str = Form(...),
+    owner_id: str = Form(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    if owner_kind not in ATTACHMENT_KINDS:
+        raise HTTPException(400, "owner_kind must be note or task")
+    owner_id = str(owner_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{4,64}", owner_id):
+        raise HTTPException(400, "owner_id is not a valid record id")
+    blob = await file.read(MAX_ATTACHMENT_BYTES + 1)
+    if not blob:
+        raise HTTPException(400, "The file is empty")
+    if len(blob) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(413, "Attachments are limited to 8 MB per file")
+    existing = db.query(
+        func.count(models.Attachment.id),
+        func.coalesce(func.sum(models.Attachment.size), 0),
+    ).filter(
+        models.Attachment.user_id == user.id,
+        models.Attachment.owner_kind == owner_kind,
+        models.Attachment.owner_id == owner_id,
+    ).one()
+    if existing[0] >= MAX_ATTACHMENTS_PER_RECORD:
+        raise HTTPException(422, f"A record can hold {MAX_ATTACHMENTS_PER_RECORD} attachments")
+    if int(existing[1] or 0) + len(blob) > MAX_ATTACHMENTS_TOTAL_BYTES:
+        raise HTTPException(413, "This record's attachments are limited to 24 MB in total")
+    name = str(file.filename or "attachment").replace("\\", "/").split("/")[-1][:255] or "attachment"
+    mime = str(file.content_type or "application/octet-stream").split(";")[0].strip()[:120]
+    row = models.Attachment(
+        id=uuid.uuid4().hex,
+        user_id=user.id,
+        owner_kind=owner_kind,
+        owner_id=owner_id,
+        name=name,
+        mime=mime or "application/octet-stream",
+        size=len(blob),
+        data=blob,
+    )
+    db.add(row)
+    _touch_owner(db, user, owner_kind, owner_id)
+    db.commit()
+    db.refresh(row)
+    return _attachment_meta(row)
+
+
+@app.get("/api/attachments/{attachment_id}")
+def get_attachment(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    row = (
+        db.query(models.Attachment)
+        .filter(models.Attachment.id == attachment_id, models.Attachment.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "Attachment not found")
+    headers = {
+        "Cache-Control": "private, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if row.mime in SAFE_INLINE_MIMES:
+        headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(row.name, safe='')}"
+        return Response(content=bytes(row.data), media_type=row.mime, headers=headers)
+    # Anything else is downloaded, never rendered in the app's origin.
+    headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(row.name, safe='')}"
+    return Response(content=bytes(row.data), media_type="application/octet-stream", headers=headers)
+
+
+@app.delete("/api/attachments/{attachment_id}")
+def delete_attachment(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    row = (
+        db.query(models.Attachment)
+        .filter(models.Attachment.id == attachment_id, models.Attachment.user_id == user.id)
+        .first()
+    )
+    if row:
+        _touch_owner(db, user, row.owner_kind, row.owner_id)
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
 
 
 def _journal_out(e: models.JournalEntry):
@@ -657,7 +812,8 @@ def _apply_journal(row, data):
 @app.get("/api/notes")
 def list_notes(db: Session = Depends(get_db), user=Depends(get_current_user)):
     rows = db.query(models.Note).filter(models.Note.user_id == user.id).order_by(models.Note.updated_at.desc()).all()
-    return [_note_out(n) for n in rows]
+    attachments = _attachments_by_owner(db, user, "note", [n.id for n in rows])
+    return [_note_out(n, attachments.get(n.id, [])) for n in rows]
 
 
 @app.post("/api/notes")
@@ -673,7 +829,8 @@ def upsert_note(payload: dict, db: Session = Depends(get_db), user=Depends(get_c
     _apply_note(row, payload)
     row.updated_at = utcnow()
     db.commit(); db.refresh(row)
-    return _note_out(row)
+    attachments = _attachments_by_owner(db, user, "note", [row.id])
+    return _note_out(row, attachments.get(row.id, []))
 
 
 @app.delete("/api/notes/{item_id}")
@@ -681,6 +838,7 @@ def delete_note(item_id: str, db: Session = Depends(get_db), user=Depends(get_cu
     row = db.query(models.Note).filter(models.Note.id == item_id, models.Note.user_id == user.id).first()
     _tombstone(db, user, 'notes', item_id)
     if row:
+        _delete_attachments(db, user, "note", row.id)
         db.delete(row)
     db.commit()
     return {"ok": True}
@@ -689,7 +847,8 @@ def delete_note(item_id: str, db: Session = Depends(get_db), user=Depends(get_cu
 @app.get("/api/tasks")
 def list_tasks(db: Session = Depends(get_db), user=Depends(get_current_user)):
     rows = db.query(models.Task).filter(models.Task.user_id == user.id).order_by(models.Task.created_at.desc()).all()
-    return [_task_out(t) for t in rows]
+    attachments = _attachments_by_owner(db, user, "task", [t.id for t in rows])
+    return [_task_out(t, attachments.get(t.id, [])) for t in rows]
 
 
 @app.post("/api/tasks")
@@ -705,7 +864,8 @@ def upsert_task(payload: dict, db: Session = Depends(get_db), user=Depends(get_c
     _apply_task(row, payload)
     row.updated_at = utcnow()
     db.commit(); db.refresh(row)
-    return _task_out(row)
+    attachments = _attachments_by_owner(db, user, "task", [row.id])
+    return _task_out(row, attachments.get(row.id, []))
 
 
 @app.delete("/api/tasks/{item_id}")
@@ -713,6 +873,7 @@ def delete_task(item_id: str, db: Session = Depends(get_db), user=Depends(get_cu
     row = db.query(models.Task).filter(models.Task.id == item_id, models.Task.user_id == user.id).first()
     _tombstone(db, user, 'tasks', item_id)
     if row:
+        _delete_attachments(db, user, "task", row.id)
         db.delete(row)
     db.commit()
     return {"ok": True}

@@ -88,9 +88,13 @@ const getCurrentMonthRange = () => ({ preset: 'this_month', ...monthRange(new Da
 const DEFAULT_EXPENSE_CATS = [
     'Car Maintenance', 'Clothes', 'Dining Out', 'Doctor Visits', 'Education',
     'Electricity', 'Entertainment', 'Fuel', 'Gas', 'Groceries', 'Grooming',
-    'Health Insurance', 'Hobbies', 'Household Items', 'Medications', 'Misc',
-    'Mobile Bills', 'Office eats', 'Subscription', 'Travel', 'Other',
+    'Health Insurance', 'Hobbies', 'Household Items', 'Investments', 'Medications', 'Misc',
+    'Mobile Bills', 'Office eats', 'Savings', 'Subscription', 'Travel', 'Other',
 ];
+// Categories added to the defaults after a user already saved their own list.
+// They are merged into the saved list on load, once, so a customised list is
+// never reset just to make the new options appear.
+const EXPENSE_CATEGORY_ADDITIONS = ['Investments', 'Savings'];
 const DEFAULT_INCOME_CATS = ['Salary', 'Interest', 'Transferred', 'Stocks', 'Freelance', 'Other'];
 const DEFAULT_PAYMENT_METHODS = ['SBI', 'HDFC', 'Cash', 'Debit Card', 'Credit Card', 'Net Banking', 'Bank Transfer', 'Other'];
 
@@ -1123,7 +1127,13 @@ export default function App() {
     const [expenseCats, setExpenseCats] = useState(() => {
         try {
             const saved = localStorage.getItem('moneta_expense_cats');
-            if (saved) return JSON.parse(saved);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed)) {
+                    const missing = EXPENSE_CATEGORY_ADDITIONS.filter(c => !parsed.includes(c));
+                    return missing.length ? [...parsed, ...missing] : parsed;
+                }
+            }
         } catch { }
         return DEFAULT_EXPENSE_CATS;
     });
@@ -2159,7 +2169,7 @@ export default function App() {
                                                         category: pool.includes(prev.category) ? prev.category : (pool[0] || ''),
                                                     };
                                                 })}
-                                                title="Toggle expense / income (Alt+E / Alt+I)"
+                                                title="Switch between expense and income"
                                             >
                                                 {inlineTx.kind === 'expense' ? <ArrowUpRight size={13} /> : <ArrowDownLeft size={13} />}
                                                 <span>{inlineTx.kind === 'expense' ? 'Expense' : 'Income'}</span>
@@ -2212,7 +2222,7 @@ export default function App() {
                                                 <input
                                                     type="date"
                                                     value={inlineTx.txn_date}
-                                                    title="Press 'T' for Today, 'Y' for Yesterday"
+                                                    title="Transaction date"
                                                     onChange={e => setInlineTx(prev => ({ ...prev, txn_date: e.target.value }))}
                                                     onKeyDown={e => {
                                                         if (e.key === 't' || e.key === 'T') {
@@ -2245,7 +2255,7 @@ export default function App() {
                                                 type="submit"
                                                 className="blue min-save-btn"
                                                 disabled={inlineBusy || !inlineTx.amount}
-                                                title="Save record (Enter)"
+                                                title="Save transaction"
                                             >
                                                 <Plus size={14} />
                                                 <span>{inlineBusy ? '…' : 'Save'}</span>
@@ -3756,7 +3766,7 @@ function CategoryDrilldownModal({
                             <span>Open in Transactions</span>
                             <ArrowUpRight size={14} />
                         </button>
-                        <button type="button" className="icon-btn" onClick={onClose} title="Close (Esc)"><X size={18} /></button>
+                        <button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={18} /></button>
                     </div>
                 </div>
 
@@ -4059,7 +4069,7 @@ function InlineTxEditor({
                 className="icon-btn"
                 onClick={onCancel}
                 disabled={busy}
-                title="Cancel (Esc)"
+                title="Cancel"
             >
                 <X size={13} />
             </button>
@@ -4125,7 +4135,7 @@ function InlineTxEditor({
                         className="ghost min-cancel-btn"
                         onClick={onCancel}
                         disabled={busy}
-                        title="Cancel (Esc)"
+                        title="Cancel"
                     >
                         <X size={14} />
                         <span>Cancel</span>

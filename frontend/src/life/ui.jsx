@@ -129,7 +129,7 @@ export function Modal({ title, subtitle, onClose, children, footer, wide }) {
                         <small>{subtitle}</small>
                         <h2>{title}</h2>
                     </div>
-                    <button type="button" className="life-icon-btn" onClick={onClose} title="Close (Esc)">
+                    <button type="button" className="life-icon-btn" onClick={onClose} title="Close">
                         <X size={16} />
                     </button>
                 </header>

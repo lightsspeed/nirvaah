@@ -79,7 +79,6 @@ function EventEditor({ event, onClose, onSave, onDelete }) {
                             </button>
                         )}
                     </div>
-                    <span className="kbd-hint">⌘ + Enter to save</span>
                     <button type="button" className="life-btn" onClick={onClose}>Cancel</button>
                     <button type="button" className="life-btn is-primary" onClick={submit}>
                         <Pencil size={14} /> {isNew ? 'Log event' : 'Save changes'}

@@ -8087,3 +8087,331 @@ main > header .topbar-search {
     opacity: 0.7;
   }
 }
+
+/* ==========================================================================
+   LIFE PAGES — one type hierarchy, shared by Notes, Tasks and Journal.
+   The task row's category/priority pill is the reference tag size
+   (--text-xs); every other overline, tag and caption now follows the same
+   token scale instead of the older 9-9.5px ad-hoc sizes.
+   ========================================================================== */
+
+.life-hero-copy h1 {
+  font-size: 27px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.022em !important;
+  line-height: 1.12 !important;
+}
+
+.life-hero-copy p {
+  font-size: var(--text-sm) !important;
+  line-height: 1.55 !important;
+}
+
+.life-hero-copy .eyebrow,
+.life-field-label,
+.life-section-label,
+.life-modal > header small {
+  font-family: var(--font-body) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--muted-foreground) !important;
+}
+
+.life-field-label {
+  display: flex !important;
+  align-items: center;
+  gap: 5px;
+}
+
+.life-field-label em {
+  font-weight: 400 !important;
+  letter-spacing: 0 !important;
+  text-transform: none;
+  opacity: 0.8;
+}
+
+.life-section-label {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.life-modal > header h2 {
+  font-size: var(--text-xl) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+  line-height: 1.2 !important;
+}
+
+.note-card h3,
+.journal-entry-card h3,
+.life-empty h3 {
+  font-size: var(--text-lg) !important;
+  font-weight: 500 !important;
+  line-height: 1.22 !important;
+}
+
+.note-body,
+.journal-entry-card p,
+.task-text {
+  font-size: var(--text-sm) !important;
+  line-height: 1.55 !important;
+}
+
+/* Tags: the same size and shape as a task row's category pill. */
+.note-tags span,
+.journal-row .task-tag,
+.journal-row .journal-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-xs) !important;
+  font-weight: 500;
+}
+
+/* Captions stay a step below the tag. */
+.note-card footer,
+.journal-entry-card footer,
+.task-meta {
+  font-size: var(--text-2xs) !important;
+  letter-spacing: 0.02em;
+}
+
+.note-card footer {
+  gap: 7px;
+}
+
+.life-stat small {
+  font-size: var(--text-2xs) !important;
+}
+
+.note-cat {
+  font-size: var(--text-xs) !important;
+}
+
+/* ==========================================================================
+   LIFE PAGES — motion. Short, quiet entrances; hover lift on cards; a pop on
+   the task check. Everything is disabled when the user asks for less motion.
+   ========================================================================== */
+
+@keyframes lifePageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes lifeItemIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes lifeCheckPop {
+  0% { transform: scale(0.72); }
+  65% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+@keyframes lifeSpin {
+  to { transform: rotate(360deg); }
+}
+
+.life-page > * {
+  animation: lifePageIn 280ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.life-page > *:nth-child(2) { animation-delay: 30ms; }
+.life-page > *:nth-child(3) { animation-delay: 60ms; }
+.life-page > *:nth-child(4) { animation-delay: 90ms; }
+
+.life-stats .life-stat {
+  animation: lifeItemIn 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.life-stats .life-stat:nth-child(2) { animation-delay: 35ms; }
+.life-stats .life-stat:nth-child(3) { animation-delay: 70ms; }
+.life-stats .life-stat:nth-child(4) { animation-delay: 105ms; }
+
+.notes-grid .note-card,
+.task-list .task-row {
+  animation: lifeItemIn 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.notes-grid .note-card:nth-child(2),
+.task-list .task-row:nth-child(2) { animation-delay: 24ms; }
+
+.notes-grid .note-card:nth-child(3),
+.task-list .task-row:nth-child(3) { animation-delay: 48ms; }
+
+.notes-grid .note-card:nth-child(4),
+.task-list .task-row:nth-child(4) { animation-delay: 72ms; }
+
+.note-card,
+.journal-entry-card {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease,
+    transform 180ms ease !important;
+}
+
+.note-card:hover,
+.journal-entry-card:hover {
+  transform: translateY(-2px);
+}
+
+.task-check.is-checked {
+  animation: lifeCheckPop 220ms ease-out;
+}
+
+.spin {
+  animation: lifeSpin 0.9s linear infinite;
+}
+
+/* ==========================================================================
+   NOTE / TASK ATTACHMENTS
+   ========================================================================== */
+
+.attachment-field {
+  gap: 8px;
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  animation: lifeItemIn 180ms ease both;
+}
+
+.attachment-thumb {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--secondary);
+}
+
+.attachment-thumb.is-file {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+}
+
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attachment-name span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--foreground);
+}
+
+.attachment-name small {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.attachment-name:hover span {
+  text-decoration: underline;
+}
+
+.attachment-remove {
+  flex: 0 0 auto;
+}
+
+.attachment-add {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.attachment-add:hover:not(:disabled) {
+  color: var(--foreground);
+  border-color: var(--ring);
+  background: var(--accent);
+}
+
+.attachment-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.attachment-error {
+  font-size: var(--text-xs);
+  color: var(--destructive);
+}
+
+.note-attach-count,
+.task-note-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.note-attach-count {
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .life-page > *,
+  .life-stats .life-stat,
+  .notes-grid .note-card,
+  .task-list .task-row,
+  .attachment-item,
+  .task-check.is-checked,
+  .life-modal,
+  .life-modal-layer,
+  .spin {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .note-card:hover,
+  .journal-entry-card:hover {
+    transform: none;
+  }
+}

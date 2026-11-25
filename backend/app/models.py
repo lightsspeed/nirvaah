@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -133,6 +134,27 @@ class Deletion(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(12))
     deleted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Attachment(Base):
+    """An image or file attached to a note or a task.
+
+    The bytes live here rather than in the note/task row so listing either
+    collection never reads a blob. The owner is a client-generated id, which
+    lets an attachment be uploaded before the note or task itself exists (the
+    editor can attach first and save afterwards); the owner kind + id pair is
+    re-read from this table when the record is listed.
+    """
+    __tablename__ = "attachments"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    owner_kind: Mapped[str] = mapped_column(String(12), index=True)  # note | task
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    mime: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 # ── Assistant: conversations, turns and durable memory ──────────────────────

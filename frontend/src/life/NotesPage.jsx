@@ -1,13 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Plus, FileText, Pin, Archive, ArchiveRestore, Trash2, PencilLine,
-    Undo2, NotebookPen, Tag, SlidersHorizontal,
+    Undo2, NotebookPen, Tag, SlidersHorizontal, Paperclip,
 } from 'lucide-react';
 import {
     useCollection, logActivity, uid, timeAgo, wordCount, formatDay,
     NOTES_KEY, tintOf, categoryPool, useCategories,
 } from './store';
 import { PageHero, StatTile, Chip, EmptyState, Modal, CategoryManager, Select } from './ui';
+import AttachmentField from './AttachmentField';
+import { deleteAttachment } from './attachments';
 import { useConfirm } from '../ConfirmDialog';
 
 const SORTS = [
@@ -22,6 +24,7 @@ const emptyDraft = () => ({
     body: '',
     category: 'Personal',
     tags: [],
+    attachments: [],
     pinned: false,
     archived: false,
     createdAt: Date.now(),
@@ -76,6 +79,11 @@ function NoteCard({ note, onOpen, onTogglePin, onToggleArchive, onDelete }) {
                 <span>{timeAgo(note.updatedAt)}</span>
                 <span className="dot-sep">·</span>
                 <span>{wordCount(note.body)} words</span>
+                {note.attachments?.length > 0 && (
+                    <span className="note-attach-count" title={`${note.attachments.length} attachment${note.attachments.length === 1 ? '' : 's'}`}>
+                        <Paperclip size={11} /> {note.attachments.length}
+                    </span>
+                )}
             </footer>
         </article>
     );
@@ -86,10 +94,20 @@ function NoteEditor({ note, onClose, onSave, onDelete }) {
     const pool = useMemo(() => categoryPool(cats, [note]), [cats, note]);
     const [draft, setDraft] = useState(() => ({ ...note, tagsText: (note.tags || []).join(', ') }));
     const isNew = !note.title;
+    const originalAttachmentIds = useRef(new Set((note.attachments || []).map(a => a.id)));
+
+    // Files attached to an abandoned draft have no record to belong to; drop
+    // them when the editor closes without saving.
+    const close = () => {
+        (draft.attachments || []).forEach(a => {
+            if (!originalAttachmentIds.current.has(a.id)) deleteAttachment(a.id).catch(() => { });
+        });
+        onClose();
+    };
 
     useEffect(() => {
         const onKey = e => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') close();
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                 e.preventDefault();
                 submit();
@@ -109,7 +127,7 @@ function NoteEditor({ note, onClose, onSave, onDelete }) {
         <Modal
             title={isNew ? 'New note' : 'Edit note'}
             subtitle={isNew ? 'CAPTURE' : `EDITED ${formatDay(note.updatedAt).toUpperCase()}`}
-            onClose={onClose}
+            onClose={close}
             wide
             footer={(
                 <>
@@ -120,8 +138,7 @@ function NoteEditor({ note, onClose, onSave, onDelete }) {
                             </button>
                         )}
                     </div>
-                    <span className="kbd-hint">⌘ + Enter to save</span>
-                    <button type="button" className="life-btn" onClick={onClose}>Cancel</button>
+                    <button type="button" className="life-btn" onClick={close}>Cancel</button>
                     <button type="button" className="life-btn is-primary" onClick={submit}>
                         <PencilLine size={14} /> {isNew ? 'Create note' : 'Save changes'}
                     </button>
@@ -133,7 +150,7 @@ function NoteEditor({ note, onClose, onSave, onDelete }) {
                 placeholder="Note title"
                 value={draft.title}
                 onChange={e => setDraft({ ...draft, title: e.target.value })}
-                autoFocus
+                autoFocus={isNew}
             />
             <div className="life-field">
                 <span className="life-field-label">Category</span>
@@ -167,6 +184,12 @@ function NoteEditor({ note, onClose, onSave, onDelete }) {
                     onChange={e => setDraft({ ...draft, body: e.target.value })}
                 />
             </label>
+            <AttachmentField
+                kind="note"
+                ownerId={draft.id}
+                value={draft.attachments || []}
+                onChange={attachments => setDraft(prev => ({ ...prev, attachments }))}
+            />
             <button
                 type="button"
                 className={`note-pin-toggle${draft.pinned ? ' is-on' : ''}`}
@@ -267,7 +290,7 @@ export default function NotesPage() {
             <div className="life-stats">
                 <StatTile label="Total notes" value={notes.length} hint={`${wordCount(notes.map(n => n.body).join(' '))} words captured`} icon={NotebookPen} tint="#d97757" />
                 <StatTile label="Pinned" value={pinnedCount} hint="Always in sight" icon={Pin} tint="#c9a227" />
-                <StatTile label="Categories in use" value={categoryCount} hint={`of ${pool.length} available`} icon={Tag} tint="#7fa650" />
+                <StatTile label="Categories used" value={categoryCount} hint={`of ${pool.length} available`} icon={Tag} tint="#7fa650" />
                 <StatTile label="Archived" value={archivedCount} hint="Kept, not in the way" icon={Archive} tint="#6a9bd0" />
             </div>
 

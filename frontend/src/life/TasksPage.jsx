@@ -1,13 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Plus, Check, Trash2, Pencil, ListChecks, Flame, CalendarClock,
     CircleCheckBig, ChevronDown, CalendarDays, Flag, StickyNote, X, SlidersHorizontal,
+    Paperclip,
 } from 'lucide-react';
 import {
-    useCollection, logActivity, todayISO, shiftISO, shortDay, timeAgo,
+    useCollection, logActivity, todayISO, shiftISO, shortDay, timeAgo, uid,
     isOverdue, monthKey, TASKS_KEY, PRIORITIES, priorityMeta, tintOf, categoryPool, useCategories,
 } from './store';
 import { PageHero, StatTile, Chip, Segmented, EmptyState, Progress, CategoryManager, Select } from './ui';
+import AttachmentField from './AttachmentField';
+import { deleteAttachment } from './attachments';
 import { useConfirm } from '../ConfirmDialog';
 import { parseDateOnly } from '../dates';
 
@@ -38,10 +41,22 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
     const pool = useMemo(() => categoryPool(cats, [task]), [cats, task]);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(task);
+    const originalAttachmentIds = useRef(new Set((task.attachments || []).map(a => a.id)));
     const prio = priorityMeta(task.priority);
     const overdue = !task.done && isOverdue(task.due);
 
-    useEffect(() => { setDraft(task); }, [task]);
+    useEffect(() => {
+        setDraft(task);
+        originalAttachmentIds.current = new Set((task.attachments || []).map(a => a.id));
+    }, [task]);
+
+    // Cancelling an edit abandons files added in it; they have no other owner.
+    const cancelEdit = () => {
+        (draft.attachments || []).forEach(a => {
+            if (!originalAttachmentIds.current.has(a.id)) deleteAttachment(a.id).catch(() => { });
+        });
+        setEditing(false);
+    };
 
     if (editing) {
         return (
@@ -53,7 +68,7 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
                         onChange={e => setDraft({ ...draft, text: e.target.value })}
                         onKeyDown={e => {
                             if (e.key === 'Enter') { onSave(draft); setEditing(false); }
-                            if (e.key === 'Escape') setEditing(false);
+                            if (e.key === 'Escape') cancelEdit();
                         }}
                         autoFocus
                     />
@@ -63,6 +78,13 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
                         placeholder="Notes (optional)"
                         value={draft.notes}
                         onChange={e => setDraft({ ...draft, notes: e.target.value })}
+                    />
+                    <AttachmentField
+                        kind="task"
+                        ownerId={task.id}
+                        value={draft.attachments || []}
+                        onChange={attachments => setDraft(prev => ({ ...prev, attachments }))}
+                        label="Files"
                     />
                     <div className="task-edit-grid">
                         <Select
@@ -83,7 +105,7 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
                         </label>
                     </div>
                     <div className="task-edit-actions">
-                        <button type="button" className="life-btn is-ghost" onClick={() => setEditing(false)}>Cancel</button>
+                        <button type="button" className="life-btn is-ghost" onClick={cancelEdit}>Cancel</button>
                         <button type="button" className="life-btn is-primary" onClick={() => { onSave(draft); setEditing(false); }}>
                             <Check size={14} /> Save
                         </button>
@@ -127,6 +149,11 @@ function TaskRow({ task, onToggle, onDelete, onSave, hideCategory = false }) {
                     )}
                     {overdue && <span className="task-due is-overdue">overdue</span>}
                     {task.notes && <span className="task-note-dot" title={task.notes}><StickyNote size={11} /></span>}
+                    {task.attachments?.length > 0 && (
+                        <span className="task-note-dot" title={`${task.attachments.length} attachment${task.attachments.length === 1 ? '' : 's'}`}>
+                            <Paperclip size={11} /> {task.attachments.length}
+                        </span>
+                    )}
                     <span className="task-age">{timeAgo(task.createdAt)}</span>
                 </div>
             </div>
@@ -201,7 +228,7 @@ function ProjectPanel({
             <form className="project-quickadd" onSubmit={submit}>
                 <input
                     className="life-input"
-                    placeholder="Add a task and press Enter"
+                    placeholder="Add a task"
                     value={text}
                     onChange={e => setText(e.target.value)}
                 />
@@ -260,7 +287,7 @@ export default function TasksPage() {
     const [sort, setSort] = useState('due');
     const [cats, setCats] = useCategories('task');
     const pool = useMemo(() => categoryPool(cats, tasks), [cats, tasks]);
-    const [draft, setDraft] = useState({ text: '', category: 'Bills', priority: 'medium', due: '', notes: '' });
+    const [draft, setDraft] = useState({ id: '', text: '', category: 'Bills', priority: 'medium', due: '', notes: '', attachments: [] });
     const [adding, setAdding] = useState(false);
     const [manageCats, setManageCats] = useState(false);
     // Project view: a category opened as its own workspace.
@@ -339,9 +366,10 @@ export default function TasksPage() {
         const text = draft.text.trim();
         if (!text) return;
         const task = {
-            id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+            id: draft.id || uid(),
             text,
             notes: draft.notes.trim(),
+            attachments: draft.attachments || [],
             done: false,
             priority: draft.priority,
             category: draft.category,
@@ -351,7 +379,28 @@ export default function TasksPage() {
         };
         setTasks(prev => [task, ...prev]);
         logActivity(`Task added: “${text}”`, 'task', task.category);
-        setDraft({ ...draft, text: '', notes: '', due: '' });
+        // A fresh id keeps the open composer ready for its next task (and its files).
+        setDraft({ ...draft, id: uid(), text: '', notes: '', due: '', attachments: [] });
+    };
+
+    // Leaving the page with the composer open must not leave unattached files.
+    const composerFiles = useRef([]);
+    useEffect(() => { composerFiles.current = draft.attachments || []; }, [draft.attachments]);
+    useEffect(() => () => {
+        composerFiles.current.forEach(a => deleteAttachment(a.id).catch(() => { }));
+    }, []);
+
+    const openComposer = () => {
+        if (adding) {
+            // Closing the composer abandons everything typed in it, including
+            // any file uploaded for a task that will never exist.
+            (draft.attachments || []).forEach(a => deleteAttachment(a.id).catch(() => { }));
+            setDraft(prev => ({ ...prev, id: '', text: '', notes: '', due: '', attachments: [] }));
+            setAdding(false);
+            return;
+        }
+        setDraft(prev => ({ ...prev, id: uid(), attachments: [] }));
+        setAdding(true);
     };
 
     const toggle = task => {
@@ -493,7 +542,7 @@ export default function TasksPage() {
                     <button
                         type="button"
                         className="life-btn is-primary"
-                        onClick={() => setAdding(v => !v)}
+                        onClick={openComposer}
                         aria-label={adding ? 'Close task composer' : 'New task'}
                     >
                         {adding ? <X size={15} /> : <Plus size={15} />}
@@ -543,6 +592,13 @@ export default function TasksPage() {
                             <input placeholder="Optional context" value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} />
                         </label>
                     </div>
+                    <AttachmentField
+                        kind="task"
+                        ownerId={draft.id}
+                        value={draft.attachments || []}
+                        onChange={attachments => setDraft(prev => ({ ...prev, attachments }))}
+                        label="Files"
+                    />
                 </form>
             )}
 
