@@ -62,6 +62,8 @@ function streakOf(checks) {
     return streak;
 }
 
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 function yearInfo() {
     const today = todayISO();
     const day = parseDateOnly(today);
@@ -188,11 +190,12 @@ function HabitDashboard({ habits }) {
             <div className="panel life-panel habit-year-panel">
                 <div className="habit-year-head">
                     <h3>Habit heatmaps <span>· {info.year}</span></h3>
-                    <small>Each square is a day</small>
+                    <small>One dot per week · darker means more days done</small>
                 </div>
                 <div className="habit-year-list">
                     {habits.map(habit => {
                         const row = data.byHabit[habit.id];
+                        const checked = new Set(habit.checks);
                         return (
                             <div className="habit-year-row" key={habit.id} style={{ '--habit-tint': habitColor(habit) }}>
                                 <div className="habit-year-info">
@@ -205,25 +208,30 @@ function HabitDashboard({ habits }) {
                                 <div
                                     className="habit-year-map"
                                     role="img"
-                                    aria-label={`${habit.name} heatmap for ${info.year}`}
+                                    aria-label={`${habit.name} weekly heatmap for ${info.year}`}
                                 >
-                                    <div className="habit-year-weeks">
-                                        {info.weeks.map((week, weekIndex) => (
-                                            <div className="habit-year-week" key={`${habit.id}-${weekIndex}`}>
-                                                {week.map(day => {
-                                                    const outside = day < `${info.year}-01-01` || day > `${info.year}-12-31`;
-                                                    const future = day > info.today;
-                                                    const checked = !outside && habit.checks.includes(day);
-                                                    return (
-                                                        <i
-                                                            key={day}
-                                                            className={`habit-year-cell${outside ? ' is-outside' : ''}${future && !outside ? ' is-future' : ''}${checked ? ' is-checked' : ''}`}
-                                                            title={outside ? '' : `${formatDay(day)}${checked ? ' — done' : ''}`}
-                                                        />
-                                                    );
-                                                })}
-                                            </div>
-                                        ))}
+                                    <div className="habit-year-months" aria-hidden="true">
+                                        {MONTH_SHORT.map(month => <span key={month}>{month}</span>)}
+                                    </div>
+                                    <div className="habit-year-dots">
+                                        {info.weeks.map((week, weekIndex) => {
+                                            const days = week.filter(day => day >= `${info.year}-01-01` && day <= `${info.year}-12-31`);
+                                            const past = days.filter(day => day <= info.today);
+                                            const done = past.filter(day => checked.has(day)).length;
+                                            const ratio = past.length ? done / past.length : 0;
+                                            const level = done === 0 ? 0 : ratio <= 0.25 ? 1 : ratio <= 0.5 ? 2 : ratio <= 0.8 ? 3 : 4;
+                                            const tip = past.length
+                                                ? `${formatDay(days[0])} · ${done}/${past.length} day${past.length === 1 ? '' : 's'} done`
+                                                : '';
+                                            return (
+                                                <i
+                                                    key={`${habit.id}-${weekIndex}`}
+                                                    className="habit-week-dot"
+                                                    data-level={level}
+                                                    title={tip}
+                                                />
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             </div>

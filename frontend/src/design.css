@@ -9327,50 +9327,61 @@ main > header .topbar-search {
 
 .habit-year-map {
   min-width: 0;
-  overflow-x: auto;
   padding-bottom: 2px;
 }
 
-.habit-year-weeks {
-  display: flex;
-  gap: 2px;
-  width: max-content;
+/* One label per month, spread across the week strip for orientation. */
+.habit-year-months {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  margin-bottom: 7px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
 }
 
-.habit-year-week {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.habit-year-months span {
+  white-space: nowrap;
 }
 
-.habit-year-cell {
+/* One dot per week. The dot fills its grid track, so the strip uses the full
+   width of the panel instead of hugging the habit name. */
+.habit-year-dots {
+  display: grid;
+  grid-template-columns: repeat(53, minmax(0, 1fr));
+  align-items: center;
+  gap: clamp(2px, 0.3vw, 5px);
+}
+
+.habit-week-dot {
   display: block;
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
   background: var(--bg-inset);
 }
 
-.habit-year-cell.is-checked {
+.habit-week-dot[data-level='1'] {
+  background: color-mix(in srgb, var(--habit-tint, var(--success)) 20%, var(--bg-inset));
+}
+
+.habit-week-dot[data-level='2'] {
+  background: color-mix(in srgb, var(--habit-tint, var(--success)) 42%, var(--bg-inset));
+}
+
+.habit-week-dot[data-level='3'] {
+  background: color-mix(in srgb, var(--habit-tint, var(--success)) 68%, var(--bg-inset));
+}
+
+.habit-week-dot[data-level='4'] {
   background: var(--habit-tint, var(--success));
-}
-
-.habit-year-cell.is-future {
-  opacity: 0.28;
-}
-
-.habit-year-cell.is-outside {
-  background: transparent;
 }
 
 @media (max-width: 1100px) {
   .habit-year-row {
     grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
-  }
-
-  .habit-year-cell {
-    width: 7px;
-    height: 7px;
   }
 }
 
@@ -9390,14 +9401,12 @@ main > header .topbar-search {
     padding: 10px 2px;
   }
 
-  .habit-year-cell {
-    width: 4px;
-    height: 4px;
-    border-radius: 1px;
+  .habit-year-months {
+    margin-bottom: 5px;
+    font-size: 7.5px;
   }
 
-  .habit-year-weeks,
-  .habit-year-week {
-    gap: 1px;
+  .habit-year-dots {
+    gap: 1.5px;
   }
 }
