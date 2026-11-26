@@ -120,7 +120,7 @@ def test_task_payload_carries_its_attachments(client):
     task = client.post("/api/tasks", json={"id": "task-attach-1", "text": "File the papers"}).json()
     meta = _upload(client, "task", task["id"], "papers.pdf", b"%PDF", "application/pdf").json()
 
-    listed = client.get("/api/tasks").json()[0]
+    listed = next(t for t in client.get("/api/tasks").json() if t["id"] == task["id"])
     assert [a["id"] for a in listed["attachments"]] == [meta["id"]]
 
 

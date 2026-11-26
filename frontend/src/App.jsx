@@ -23,6 +23,8 @@ import { formatDateOnly, formatInstant } from './dates';
 import NotesPage from './life/NotesPage';
 import TasksPage from './life/TasksPage';
 import JournalPage from './life/JournalPage';
+import HabitsPage from './life/HabitsPage';
+import TradingJournalPage from './life/TradingJournalPage';
 import { useCollection, NOTES_KEY, TASKS_KEY, EVENTS_KEY, logActivity, startSyncWatch, REMOTE_CHANGE } from './life/store';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8001/api';
@@ -275,20 +277,21 @@ const PAGE_SINGULAR = {
     Budgets: 'budget',
     'Savings goals': 'goal',
     Investments: 'investment',
-    Liabilities: 'liability',
+    'Trading journal': 'trade',
     Reports: 'report',
     Notes: 'note',
     Tasks: 'task',
+    Habits: 'habit',
     Journal: 'event',
 };
-// "Liabilities" must not become "liabilitie".
+// Pages with an irregular name keep an explicit singular in PAGE_SINGULAR.
 const singularPage = page => PAGE_SINGULAR[page] || page.replace(/ies$/i, 'y').replace(/s$/i, '').toLowerCase();
 
 const groups = [
     ['OVERVIEW', ['Dashboard', 'Assistant']],
     ['MONEY MANAGEMENT', ['Transactions', 'Budgets', 'Reports']],
-    ['PLANNING', ['Savings goals', 'Investments', 'Liabilities']],
-    ['LIFE & NOTES', ['Notes', 'Tasks', 'Journal']],
+    ['PLANNING', ['Savings goals', 'Investments', 'Trading journal']],
+    ['LIFE & NOTES', ['Notes', 'Tasks', 'Habits', 'Journal']],
 ];
 // One colour per page — a small, consistent signal rather than a wall of icons.
 const PAGE_TINTS = {
@@ -299,9 +302,10 @@ const PAGE_TINTS = {
     Reports: '#6c5ce7',
     'Savings goals': '#3f8f4f',
     Investments: '#2f80c8',
-    Liabilities: '#c0485c',
+    'Trading journal': '#5a7089',
     Notes: '#8a5bd6',
     Tasks: '#d9713f',
+    Habits: '#7fa650',
     Journal: '#b2508f',
 };
 
@@ -315,9 +319,10 @@ const PAGE_SUBTEXT = {
     Reports: 'Where the money went, across any period you pick.',
     'Savings goals': 'What you are setting money aside for, and how close you are.',
     Investments: 'What you hold, what it cost, and what it is worth now.',
-    Liabilities: 'Loans and dues, with the monthly commitment they carry.',
+    'Trading journal': 'Setups, entries and exits. Process notes, separate from the ledger.',
     Notes: 'A quiet place for decisions, plans and half-formed money thoughts.',
     Tasks: 'Small, specific actions. Bills to pay, things to check, money to move.',
+    Habits: 'Small routines, ticked off one day at a time.',
     Journal: 'Life events, logged as they happen — the story behind the numbers.',
 };
 const pageTitle = page => PAGE_TITLES[page] || page;
@@ -325,8 +330,8 @@ const pageSubtext = page => PAGE_SUBTEXT[page] || 'Your financial picture, organ
 
 const icons = {
     Dashboard: LayoutDashboard, Transactions: ArrowLeftRight, Budgets: Wallet,
-    'Savings goals': Target, Investments: TrendingUp, Liabilities: CreditCard, Reports: ChartNoAxesCombined,
-    Notes: FileText, Tasks: CheckSquare, Journal: BookOpen, Assistant: BrandAiIcon,
+    'Savings goals': Target, Investments: TrendingUp, 'Trading journal': Activity, Reports: ChartNoAxesCombined,
+    Notes: FileText, Tasks: CheckSquare, Habits: CheckSquare, Journal: BookOpen, Assistant: BrandAiIcon,
 };
 
 // ── Custom Tooltip for Charts ────────────────────────────────────────────────
@@ -1016,7 +1021,7 @@ export default function App() {
     // POINT 2: PERSIST CURRENT PAGE ACROSS REFRESH
     const [page, setPage] = useState(() => {
         const hash = window.location.hash.replace('#', '');
-        const validPages = ['Dashboard', 'Transactions', 'Budgets', 'Savings goals', 'Investments', 'Liabilities', 'Notes', 'Tasks', 'Journal', 'Reports'];
+        const validPages = ['Dashboard', 'Transactions', 'Budgets', 'Savings goals', 'Investments', 'Trading journal', 'Notes', 'Tasks', 'Habits', 'Journal', 'Reports'];
         const matched = validPages.find(p => p.toLowerCase().replace(/\s+/g, '-') === hash);
         if (matched) return matched;
         return localStorage.getItem('moneta_page') || 'Dashboard';
@@ -1032,7 +1037,7 @@ export default function App() {
     useEffect(() => {
         const onHashChange = () => {
             const hash = window.location.hash.replace('#', '');
-            const validPages = ['Dashboard', 'Transactions', 'Budgets', 'Savings goals', 'Investments', 'Liabilities', 'Notes', 'Tasks', 'Journal', 'Reports'];
+            const validPages = ['Dashboard', 'Transactions', 'Budgets', 'Savings goals', 'Investments', 'Trading journal', 'Notes', 'Tasks', 'Habits', 'Journal', 'Reports'];
             const matched = validPages.find(p => p.toLowerCase().replace(/\s+/g, '-') === hash);
             if (matched && matched !== page) {
                 setPage(matched);
@@ -1051,7 +1056,6 @@ export default function App() {
     const [budgets, setBudgets] = useState([]);
     const [goals, setGoals] = useState([]);
     const [investments, setInvestments] = useState([]);
-    const [liabilities, setLiabilities] = useState([]);
     const [cashflow, setCashflow] = useState([]);
     const [analytics, setAnalytics] = useState(null);
     const [txRange, setTxRange] = useState({ min_date: null, max_date: null, min: null, max: null, total_count: 0 });
@@ -1548,13 +1552,12 @@ export default function App() {
                 params.end_date = range.endDate;
             }
 
-            const [dashRes, txRes, budgetRes, goalRes, invRes, liabRes] = await Promise.all([
+            const [dashRes, txRes, budgetRes, goalRes, invRes] = await Promise.all([
                 api.get('/dashboard', { params }),
                 api.get('/transactions', { params }),
                 api.get('/budgets', { params: range.month ? { month: range.month } : {} }),
                 api.get('/goals'),
                 api.get('/investments'),
-                api.get('/liabilities'),
             ]);
 
             setD(dashRes.data);
@@ -1562,7 +1565,6 @@ export default function App() {
             setBudgets(budgetRes.data);
             setGoals(goalRes.data);
             setInvestments(invRes.data);
-            setLiabilities(liabRes.data);
         } catch (err) {
             if (err.response?.status === 401) logout();
             else setError(err.response?.data?.detail || 'Could not load data');
@@ -1636,7 +1638,6 @@ export default function App() {
         Budgets: { category: expenseCats[0] || 'Groceries', monthly_limit: '', month: thisMonthStr() },
         'Savings goals': { name: '', target_amount: '', saved_amount: '0', target_date: '' },
         Investments: { name: '', asset_type: 'Mutual Fund', invested_amount: '', current_value: '', notes: '' },
-        Liabilities: { name: '', liability_type: 'Home Loan', outstanding_amount: '', monthly_emi: '0', notes: '' },
     }[p] || {});
 
     const add = () => {
@@ -1654,10 +1655,10 @@ export default function App() {
         setBusy(true);
         setError('');
         let p = { ...form };
-        ['amount', 'monthly_limit', 'target_amount', 'saved_amount', 'invested_amount', 'current_value', 'outstanding_amount', 'monthly_emi']
+        ['amount', 'monthly_limit', 'target_amount', 'saved_amount', 'invested_amount', 'current_value']
             .forEach(k => { if (p[k] !== undefined) p[k] = Number(p[k]); });
         if (p.target_date === '') p.target_date = null;
-        const path = { Transactions: 'transactions', Budgets: 'budgets', 'Savings goals': 'goals', Investments: 'investments', Liabilities: 'liabilities' }[page];
+        const path = { Transactions: 'transactions', Budgets: 'budgets', 'Savings goals': 'goals', Investments: 'investments' }[page];
         try {
             await api.post('/' + path, p);
             setModal(false);
@@ -1676,7 +1677,6 @@ export default function App() {
         budgets: { one: 'budget', many: 'Budgets' },
         goals: { one: 'savings goal', many: 'Savings goals' },
         investments: { one: 'investment', many: 'Investments' },
-        liabilities: { one: 'liability', many: 'Liabilities' },
     };
 
     const del = async (path, id, label) => {
@@ -1757,7 +1757,7 @@ export default function App() {
         </div>
     );
 
-    const data = d || { period: range.label, balance: 0, income: 0, expenses: 0, savings: 0, savings_rate: 0, investment_value: 0, liabilities: 0, net_worth: 0, category_expenses: [], budgets: [], recent_transactions: [], total_txns: 0 };
+    const data = d || { period: range.label, balance: 0, income: 0, expenses: 0, savings: 0, savings_rate: 0, investment_value: 0, investment_cost: 0, category_expenses: [], budgets: [], recent_transactions: [], total_txns: 0 };
 
 
     // Filtered transactions for Transactions view (supports description, category, payment method, date, and amount numbers)
@@ -1930,7 +1930,7 @@ export default function App() {
                             </button>
                         ) : (
                             page !== 'Dashboard' && page !== 'Reports' && page !== 'Assistant'
-                            && !['Notes', 'Tasks', 'Journal'].includes(page) && (
+                            && !['Notes', 'Tasks', 'Habits', 'Journal', 'Trading journal'].includes(page) && (
                                 <button className="blue" onClick={add} aria-label={`Add ${singularPage(page)}`}>
                                     <Plus size={15} />
                                     <span className="btn-label">Add {singularPage(page)}</span>
@@ -1992,7 +1992,9 @@ export default function App() {
                     )}
                     {page === 'Notes' && <NotesPage />}
                     {page === 'Tasks' && <TasksPage />}
+                    {page === 'Habits' && <HabitsPage />}
                     {page === 'Journal' && <JournalPage />}
+                    {page === 'Trading journal' && <TradingJournalPage />}
 
                     {/* ════════════════════════════════════════════════════════════════════
              PAGE: DASHBOARD
@@ -2211,16 +2213,22 @@ export default function App() {
                             {/* Financial position */}
                             <article className="card networth">
                                 <div className="card-head">
-                                    <div className="label"><i className="ico"><Landmark size={16} /></i>Financial position</div>
-                                    <span className="pill">OVERVIEW</span>
+                                    <div className="label"><i className="ico"><TrendingUp size={16} /></i>Investments</div>
+                                    <span className="pill">PORTFOLIO</span>
                                 </div>
-                                <small>ESTIMATED NET WORTH</small>
-                                <strong><AnimatedNumber value={data.net_worth} /></strong>
+                                <small>CURRENT VALUE</small>
+                                <strong><AnimatedNumber value={data.investment_value} /></strong>
                                 <div className="net-detail">
-                                    <span>Investments <b>{money(data.investment_value)}</b></span>
-                                    <span>Liabilities <b>{money(data.liabilities)}</b></span>
+                                    <span>Invested <b>{money(data.investment_cost)}</b></span>
+                                    <span>
+                                        Gain / loss{' '}
+                                        <b className={data.investment_value >= data.investment_cost ? 'green' : 'red-text'}>
+                                            {data.investment_value >= data.investment_cost ? '+' : ''}
+                                            {money(data.investment_value - data.investment_cost)}
+                                        </b>
+                                    </span>
                                 </div>
-                                <button className="link" onClick={() => navigateTo('Reports')}>See breakdown <ArrowUpRight size={13} /></button>
+                                <button className="link" onClick={() => navigateTo('Investments')}>View investments <ArrowUpRight size={13} /></button>
                             </article>
                         </div>
                     )}
@@ -2634,34 +2642,6 @@ export default function App() {
                     {/* ════════════════════════════════════════════════════════════════════
              PAGE: LIABILITIES
              ════════════════════════════════════════════════════════════════════ */}
-                    {page === 'Liabilities' && (
-                        <section className="panel">
-                            <h2 style={{ marginBottom: 4 }}>Loans &amp; liabilities</h2>
-                            <p className="muted" style={{ marginBottom: 20 }}>Outstanding balances and monthly EMIs.</p>
-                            <div className="table-wrap">
-                                <table>
-                                    <thead><tr><th>Name</th><th>Type</th><th>Outstanding</th><th>Monthly EMI</th><th></th></tr></thead>
-                                    <tbody>
-                                        {liabilities.length ? liabilities.map(x => (
-                                            <tr key={x.id}>
-                                                <td><b>{x.name}</b></td>
-                                                <td><span className="cat-badge">{x.liability_type}</span></td>
-                                                <td><b className="red-text">{money(x.outstanding_amount)}</b></td>
-                                                <td>{money(x.monthly_emi)}</td>
-                                                <td><button className="icon-btn" onClick={() => del('liabilities', x.id)}><Trash2 size={14} /></button></td>
-                                            </tr>
-                                        )) : <tr><td colSpan={5}>
-                                            <div className="empty">
-                                                <b>No liabilities recorded yet</b>
-                                                <span>Add loans and credit lines to see what you still owe.</span>
-                                            </div>
-                                        </td></tr>}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </section>
-                    )}
-
                     {/* ════════════════════════════════════════════════════════════════════
              PAGE: REPORTS
              ════════════════════════════════════════════════════════════════════ */}
@@ -3631,36 +3611,6 @@ function Modal({
                         <div className="form-group">
                             <span className="form-label">Current value (₹)</span>
                             <input required type="number" min="0" value={form.current_value ?? ''} onChange={e => set('current_value', e.target.value)} />
-                        </div>
-                        <div className="form-group">
-                            <span className="form-label">Notes</span>
-                            <input type="text" value={form.notes ?? ''} onChange={e => set('notes', e.target.value)} />
-                        </div>
-                    </>
-                )}
-
-                {page === 'Liabilities' && (
-                    <>
-                        <div className="form-group">
-                            <span className="form-label">Liability name</span>
-                            <input required type="text" placeholder="e.g. HDFC Home Loan" value={form.name ?? ''} onChange={e => set('name', e.target.value)} />
-                        </div>
-                        <div className="form-group">
-                            <span className="form-label">Type</span>
-                            <CustomSelect
-                                value={form.liability_type || 'Home Loan'}
-                                onChange={v => set('liability_type', v)}
-                                options={['Home Loan', 'Personal Loan', 'Car Loan', 'Education Loan', 'Credit Card', 'Other']}
-                                fullWidth
-                            />
-                        </div>
-                        <div className="form-group">
-                            <span className="form-label">Outstanding amount (₹)</span>
-                            <input required type="number" min="0" value={form.outstanding_amount ?? ''} onChange={e => set('outstanding_amount', e.target.value)} />
-                        </div>
-                        <div className="form-group">
-                            <span className="form-label">Monthly EMI (₹)</span>
-                            <input type="number" min="0" value={form.monthly_emi ?? '0'} onChange={e => set('monthly_emi', e.target.value)} />
                         </div>
                         <div className="form-group">
                             <span className="form-label">Notes</span>

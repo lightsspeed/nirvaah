@@ -335,7 +335,7 @@ export default function AssistantPage({ api, user, onChanged }) {
                         <div className="ai-empty">
                             <h4>Ask about your money.</h4>
                             <p>
-                                I can read your transactions, budgets, goals, investments, liabilities,
+                                I can read your transactions, budgets, goals, investments,
                                 notes, tasks and journal — and add, change or remove records when you ask.
                                 Follow-ups work: “and last month?”, “delete that one”.
                             </p>

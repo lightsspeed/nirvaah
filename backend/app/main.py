@@ -3,8 +3,9 @@ import math
 import os
 import re
 import uuid
-from datetime import date, timedelta
 from calendar import monthrange
+from datetime import date, timedelta
+from decimal import Decimal, DecimalException
 from urllib.parse import quote
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
@@ -938,6 +939,201 @@ def _is_deleted(db, user, item_id):
     return bool(row and row.user_id == user.id)
 
 
+# ── Habits and the trading journal ─────────────────────────────────────────
+# Both are personal records with their own tables. Neither is read by the
+# dashboard, budgets, reports or the assistant's money facts.
+
+def _habit_checks(value) -> str:
+    """Keep only real calendar days, de-duplicated and sorted."""
+    if not isinstance(value, list):
+        return "[]"
+    days = set()
+    for item in value[:1000]:
+        try:
+            day = date.fromisoformat(str(item)[:10])
+        except ValueError:
+            continue
+        days.add(day.isoformat())
+    return json.dumps(sorted(days))
+
+
+def _habit_target(value) -> int:
+    try:
+        target = int(value)
+    except (TypeError, ValueError):
+        target = 7
+    return max(1, min(7, target))
+
+
+def _habit_out(h: models.Habit):
+    try:
+        checks = json.loads(h.checks or "[]")
+    except (TypeError, ValueError):
+        checks = []
+    return {
+        "id": h.id, "name": h.name, "category": h.category,
+        "target": h.target, "checks": checks,
+        "createdAt": iso_utc(h.created_at), "updatedAt": iso_utc(h.updated_at),
+    }
+
+
+def _apply_habit(row, data):
+    if "name" in data:
+        row.name = str(data["name"]).strip()[:160]
+    if "category" in data:
+        row.category = str(data["category"]).strip()[:60] or "Personal"
+    if "target" in data:
+        row.target = _habit_target(data["target"])
+    if "checks" in data:
+        row.checks = _habit_checks(data["checks"])
+    return row
+
+
+def _quantity(value) -> Decimal:
+    try:
+        amount = Decimal(str(value).strip())
+    except (DecimalException, ValueError, TypeError):
+        raise HTTPException(422, "quantity must be a number")
+    if not amount.is_finite() or amount <= 0:
+        raise HTTPException(422, "quantity must be more than zero")
+    if amount > Decimal("1000000000"):
+        raise HTTPException(422, "quantity is too large")
+    return amount.quantize(Decimal("0.0001"))
+
+
+def _trade_price(value, field: str, *, required: bool = True):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise HTTPException(422, f"{field} is required")
+        return None
+    try:
+        return money.require_money(value, field=field)
+    except money.MoneyError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _trade_out(t: models.Trade):
+    return {
+        "id": t.id,
+        "trade_date": _iso(t.trade_date),
+        "symbol": t.symbol,
+        "side": t.side,
+        "quantity": float(t.quantity or 0),
+        "entry_price": money.number(t.entry_price),
+        "exit_price": money.number(t.exit_price),
+        "fees": money.number(t.fees),
+        "setup": t.setup,
+        "notes": t.notes,
+        "createdAt": iso_utc(t.created_at),
+        "updatedAt": iso_utc(t.updated_at),
+    }
+
+
+def _apply_trade(row, data):
+    if "trade_date" in data or "date" in data:
+        parsed = _to_date(data.get("trade_date") or data.get("date"))
+        if parsed is None:
+            raise HTTPException(422, "trade_date must be a calendar day")
+        row.trade_date = parsed
+    if "symbol" in data:
+        row.symbol = str(data["symbol"]).strip().upper()[:40]
+    if "side" in data:
+        side = str(data["side"]).strip().lower()
+        if side not in ("buy", "sell"):
+            raise HTTPException(422, "side must be buy or sell")
+        row.side = side
+    if "quantity" in data:
+        row.quantity = _quantity(data["quantity"])
+    if "entry_price" in data:
+        row.entry_price = _trade_price(data["entry_price"], "entry_price")
+    if "exit_price" in data:
+        row.exit_price = _trade_price(data["exit_price"], "exit_price", required=False)
+    if "fees" in data:
+        row.fees = _trade_price(data["fees"], "fees", required=False) or money.ZERO
+    if "setup" in data:
+        row.setup = str(data["setup"]).strip()[:80]
+    if "notes" in data:
+        row.notes = str(data["notes"])
+    return row
+
+
+@app.get("/api/habits")
+def list_habits(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    rows = db.query(models.Habit).filter(models.Habit.user_id == user.id).order_by(models.Habit.created_at.asc()).all()
+    return [_habit_out(h) for h in rows]
+
+
+@app.post("/api/habits")
+def upsert_habit(payload: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if payload.get("id") and _is_deleted(db, user, str(payload.get("id"))):
+        return {"ok": True, "skipped": "deleted"}
+    row = db.get(models.Habit, str(payload.get("id"))) if payload.get("id") else None
+    if row and row.user_id != user.id:
+        raise HTTPException(404, "Record not found")
+    if not row:
+        row = models.Habit(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
+        db.add(row)
+    _apply_habit(row, payload)
+    row.updated_at = utcnow()
+    db.commit(); db.refresh(row)
+    return _habit_out(row)
+
+
+@app.delete("/api/habits/{item_id}")
+def delete_habit(item_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    row = db.query(models.Habit).filter(models.Habit.id == item_id, models.Habit.user_id == user.id).first()
+    _tombstone(db, user, "habits", item_id)
+    if row:
+        db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/trades")
+def list_trades(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    rows = (
+        db.query(models.Trade)
+        .filter(models.Trade.user_id == user.id)
+        .order_by(models.Trade.trade_date.desc(), models.Trade.created_at.desc())
+        .all()
+    )
+    return [_trade_out(t) for t in rows]
+
+
+@app.post("/api/trades")
+def upsert_trade(payload: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if payload.get("id") and _is_deleted(db, user, str(payload.get("id"))):
+        return {"ok": True, "skipped": "deleted"}
+    row = db.get(models.Trade, str(payload.get("id"))) if payload.get("id") else None
+    if row and row.user_id != user.id:
+        raise HTTPException(404, "Record not found")
+    if not row:
+        row = models.Trade(id=str(payload.get("id") or uuid.uuid4()), user_id=user.id)
+        db.add(row)
+    _apply_trade(row, payload)
+    if not row.trade_date:
+        raise HTTPException(422, "trade_date is required")
+    if not row.symbol:
+        raise HTTPException(422, "symbol is required")
+    if row.quantity is None or row.quantity <= 0:
+        raise HTTPException(422, "quantity must be more than zero")
+    if row.entry_price is None:
+        raise HTTPException(422, "entry_price is required")
+    row.updated_at = utcnow()
+    db.commit(); db.refresh(row)
+    return _trade_out(row)
+
+
+@app.delete("/api/trades/{item_id}")
+def delete_trade(item_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    row = db.query(models.Trade).filter(models.Trade.id == item_id, models.Trade.user_id == user.id).first()
+    _tombstone(db, user, "trades", item_id)
+    if row:
+        db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
 @app.get("/api/sync/version")
 def sync_version(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """A tiny fingerprint of this user's life records. Clients poll it and
@@ -948,7 +1144,10 @@ def sync_version(db: Session = Depends(get_db), user=Depends(get_current_user)):
         return f"{latest.isoformat() if latest else '-'}:{count or 0}"
 
     dead = db.query(func.count()).select_from(models.Deletion).filter(models.Deletion.user_id == user.id).scalar()
-    parts = [stamp(models.Note), stamp(models.Task), stamp(models.JournalEntry), str(dead or 0)]
+    parts = [
+        stamp(models.Note), stamp(models.Task), stamp(models.JournalEntry),
+        stamp(models.Habit), stamp(models.Trade), str(dead or 0),
+    ]
     return {"version": "|".join(parts)}
 
 

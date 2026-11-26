@@ -8515,3 +8515,368 @@ main > header .topbar-search {
 .sav-text {
   color: var(--chart-3) !important;
 }
+
+/* ==========================================================================
+   HABITS
+   ========================================================================== */
+
+.habit-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.habit-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.5fr) auto 92px auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.habit-row:last-child {
+  border-bottom: none;
+}
+
+.habit-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.habit-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--habit-tint, var(--primary));
+}
+
+.habit-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.habit-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.habit-title small {
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.habit-title .life-progress {
+  flex: none;
+  width: 170px;
+  max-width: 100%;
+  height: 3px;
+}
+
+.habit-week {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.habit-day {
+  position: relative;
+  width: 38px;
+  height: 46px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
+}
+
+.habit-day small {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.habit-day b {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.habit-day svg {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  color: var(--habit-tint, var(--primary));
+}
+
+.habit-day:hover {
+  border-color: var(--ring);
+  background: var(--accent);
+}
+
+.habit-day.is-done {
+  border-color: color-mix(in srgb, var(--habit-tint, var(--primary)) 42%, transparent);
+  background: color-mix(in srgb, var(--habit-tint, var(--primary)) 13%, var(--card));
+}
+
+.habit-day.is-today {
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.habit-streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.habit-streak b {
+  font-size: var(--text-sm);
+  color: var(--foreground);
+}
+
+.habit-streak svg {
+  color: var(--chart-1);
+}
+
+.habit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.habit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (max-width: 760px) {
+  .habit-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'info actions'
+      'week week'
+      'streak streak';
+    gap: 10px;
+    padding: 12px 4px;
+  }
+
+  .habit-info { grid-area: info; }
+  .habit-week { grid-area: week; justify-content: space-between; gap: 4px; }
+  .habit-streak { grid-area: streak; }
+  .habit-actions { grid-area: actions; }
+
+  .habit-day {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    height: 44px;
+  }
+
+  .habit-title .life-progress {
+    width: 100%;
+  }
+}
+
+/* ==========================================================================
+   TRADING JOURNAL
+   ========================================================================== */
+
+.trade-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+
+.trade-intro-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--chart-4);
+}
+
+.trade-intro p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.trade-intro b {
+  color: var(--foreground);
+}
+
+.trade-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.trades-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.trade-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.trade-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trade-symbol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trade-symbol b {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+
+.trade-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.trade-side.is-buy {
+  background: var(--success-soft);
+  color: var(--success-soft-foreground);
+}
+
+.trade-side.is-sell {
+  background: var(--destructive-soft);
+  color: var(--destructive-soft-foreground);
+}
+
+.trade-pnl {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.trade-pnl.is-win { color: var(--success-soft-foreground); }
+.trade-pnl.is-loss { color: var(--destructive); }
+
+.trade-pnl.is-open {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+
+.trade-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.trade-setup {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+}
+
+.trade-notes {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+}
+
+.trade-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: auto;
+}
+
+.trade-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.trade-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.trade-form-grid.is-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trade-form-error {
+  font-size: var(--text-xs);
+  color: var(--destructive);
+}
+
+@media (max-width: 700px) {
+  .trades-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-form-grid,
+  .trade-form-grid.is-three {
+    grid-template-columns: 1fr;
+  }
+}

@@ -126,6 +126,42 @@ class JournalEntry(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Habit(Base):
+    """A habit and the days it was checked, as a local-first life record.
+
+    It deliberately has no link to the ledger: a habit is a personal routine,
+    not money. Checks are a JSON list of calendar days (YYYY-MM-DD) so one row
+    carries the whole history and the sync payload stays small.
+    """
+    __tablename__ = "habits"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160), default="")
+    category: Mapped[str] = mapped_column(String(60), default="Personal")
+    target: Mapped[int] = mapped_column(Integer, default=7)  # days per week
+    checks: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Trade(Base):
+    """A trade journal entry. It is never read by the dashboard, budgets or reports."""
+    __tablename__ = "trades"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    trade_date: Mapped[date] = mapped_column(Date)
+    symbol: Mapped[str] = mapped_column(String(40), default="")
+    side: Mapped[str] = mapped_column(String(8), default="buy")  # buy | sell
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    fees: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    setup: Mapped[str] = mapped_column(String(80), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Deletion(Base):
     """A tombstone. Deleting on one device must not be undone by another
     device that still holds the record in its local cache."""

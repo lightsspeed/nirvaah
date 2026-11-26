@@ -1,0 +1,284 @@
+import React, { useMemo, useState } from 'react';
+import {
+    Plus, Check, Flame, CalendarCheck, Trash2, Pencil, ListChecks,
+} from 'lucide-react';
+import {
+    useCollection, logActivity, uid, todayISO, shiftISO, tintOf, HABITS_KEY,
+    formatDay,
+} from './store';
+import { PageHero, StatTile, Chip, EmptyState, Modal, Progress, Select } from './ui';
+import { useConfirm } from '../ConfirmDialog';
+import { parseDateOnly } from '../dates';
+
+const CATEGORIES = ['Health', 'Mind', 'Money', 'Work', 'Home', 'Personal'];
+const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+const blankHabit = () => ({
+    id: uid(),
+    name: '',
+    category: 'Health',
+    target: 7,
+    checks: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+});
+
+function weekDates() {
+    const today = todayISO();
+    const day = parseDateOnly(today);
+    const offset = day ? (day.getDay() + 6) % 7 : 0;
+    const start = shiftISO(today, -offset);
+    return Array.from({ length: 7 }, (_, index) => shiftISO(start, index));
+}
+
+function streakOf(checks) {
+    const days = new Set(checks || []);
+    // A habit that has not been ticked yet today is not a broken streak.
+    let cursor = days.has(todayISO()) ? todayISO() : shiftISO(todayISO(), -1);
+    let streak = 0;
+    while (days.has(cursor)) {
+        streak += 1;
+        cursor = shiftISO(cursor, -1);
+    }
+    return streak;
+}
+
+function HabitEditor({ habit, onClose, onSave, onDelete }) {
+    const [draft, setDraft] = useState(habit);
+    const isNew = !habit.name;
+
+    const submit = event => {
+        event.preventDefault();
+        const name = draft.name.trim();
+        if (!name) return;
+        onSave({ ...draft, name, updatedAt: Date.now() });
+    };
+
+    return (
+        <Modal
+            title={isNew ? 'New habit' : 'Edit habit'}
+            subtitle={isNew ? 'A SMALL ROUTINE' : `${draft.checks.length} DAYS LOGGED`}
+            onClose={onClose}
+            footer={(
+                <>
+                    <div className="life-modal-left">
+                        {!isNew && (
+                            <button type="button" className="life-btn is-ghost is-danger" onClick={() => onDelete(habit)}>
+                                <Trash2 size={14} /> Delete
+                            </button>
+                        )}
+                    </div>
+                    <button type="button" className="life-btn" onClick={onClose}>Cancel</button>
+                    <button type="button" className="life-btn is-primary" onClick={submit}>
+                        <Check size={14} /> {isNew ? 'Create habit' : 'Save habit'}
+                    </button>
+                </>
+            )}
+        >
+            <form className="habit-form" onSubmit={submit}>
+                <label className="life-field">
+                    <span className="life-field-label">Habit</span>
+                    <input
+                        className="life-input"
+                        placeholder="e.g. Walk 30 minutes"
+                        value={draft.name}
+                        onChange={e => setDraft({ ...draft, name: e.target.value })}
+                        autoFocus={isNew}
+                    />
+                </label>
+                <div className="life-field">
+                    <span className="life-field-label">Category</span>
+                    <div className="life-chip-row">
+                        {CATEGORIES.map(category => (
+                            <Chip
+                                key={category}
+                                label={category}
+                                active={draft.category === category}
+                                onClick={() => setDraft({ ...draft, category })}
+                            />
+                        ))}
+                    </div>
+                </div>
+                <Select
+                    label="Days per week"
+                    value={draft.target}
+                    onChange={value => setDraft({ ...draft, target: Number(value) })}
+                    options={[1, 2, 3, 4, 5, 6, 7].map(days => ({
+                        value: days,
+                        label: `${days} day${days === 1 ? '' : 's'} a week`,
+                    }))}
+                />
+            </form>
+        </Modal>
+    );
+}
+
+export default function HabitsPage() {
+    const { ask, dialog } = useConfirm();
+    const [habits, setHabits] = useCollection(HABITS_KEY);
+    const [editing, setEditing] = useState(null);
+    // Computed per render so an app left open across midnight shows the new day.
+    const week = weekDates();
+
+    const doneByHabit = useMemo(() => {
+        const map = {};
+        habits.forEach(habit => {
+            map[habit.id] = week.filter(day => habit.checks.includes(day)).length;
+        });
+        return map;
+    }, [habits, week]);
+
+    const stats = useMemo(() => {
+        const doneToday = habits.filter(habit => habit.checks.includes(todayISO())).length;
+        const bestStreak = habits.reduce((best, habit) => Math.max(best, streakOf(habit.checks)), 0);
+        const doneWeek = habits.reduce((sum, habit) => sum + (doneByHabit[habit.id] || 0), 0);
+        const possible = habits.length * 7;
+        return {
+            active: habits.length,
+            doneToday,
+            bestStreak,
+            weekPct: possible ? Math.round((doneWeek / possible) * 100) : 0,
+            doneWeek,
+        };
+    }, [habits, doneByHabit]);
+
+    const toggleDay = (habit, day) => {
+        const done = habit.checks.includes(day);
+        setHabits(prev => prev.map(item => {
+            if (item.id !== habit.id) return item;
+            const checks = done
+                ? item.checks.filter(value => value !== day)
+                : [...item.checks, day].sort();
+            return { ...item, checks, updatedAt: Date.now() };
+        }));
+        logActivity(
+            `${done ? 'Unchecked' : 'Checked'} ${habit.name} for ${day}`,
+            'habit',
+            habit.category,
+        );
+    };
+
+    const saveHabit = draft => {
+        const exists = habits.some(habit => habit.id === draft.id);
+        setHabits(prev => exists
+            ? prev.map(habit => (habit.id === draft.id ? draft : habit))
+            : [...prev, draft]);
+        logActivity(exists ? `Habit updated: “${draft.name}”` : `Habit created: “${draft.name}”`, 'habit', draft.category);
+        setEditing(null);
+    };
+
+    const deleteHabit = async habit => {
+        const ok = await ask({
+            title: `Delete “${habit.name}”?`,
+            message: 'The habit and its check-in history are removed for good. This cannot be undone.',
+            confirmLabel: 'Delete habit',
+        });
+        if (!ok) return;
+        setHabits(prev => prev.filter(item => item.id !== habit.id));
+        logActivity(`Habit deleted: “${habit.name}”`, 'habit');
+        setEditing(null);
+    };
+
+    return (
+        <div className="life-page habits-page">
+            {dialog}
+            <PageHero>
+                <button type="button" className="life-btn is-primary" onClick={() => setEditing(blankHabit())} aria-label="New habit">
+                    <Plus size={15} /><span className="life-btn-label">New habit</span>
+                </button>
+            </PageHero>
+
+            <div className="life-stats">
+                <StatTile label="Active habits" value={stats.active} hint="Small routines, kept" icon={ListChecks} tint="#6a9bd0" />
+                <StatTile label="Done today" value={stats.doneToday} hint={stats.active ? `${stats.active - stats.doneToday} still to go` : 'Add the first one'} icon={CalendarCheck} tint="#7fa650" />
+                <StatTile label="Best streak" value={`${stats.bestStreak}d`} hint="Consecutive days" icon={Flame} tint="#d97757" />
+                <StatTile label="This week" value={`${stats.weekPct}%`} hint={`${stats.doneWeek} check-ins so far`} icon={Check} tint="#c9a227" />
+            </div>
+
+            <div className="panel life-panel">
+                <div className="life-scroll">
+                    {habits.length === 0 ? (
+                        <EmptyState
+                            icon={ListChecks}
+                            title="No habits yet"
+                            hint="Pick one small routine — a walk, a page, a glass of water — and tick it off each day."
+                            action={(
+                                <button type="button" className="life-btn is-primary" onClick={() => setEditing(blankHabit())}>
+                                    <Plus size={14} /> Add a habit
+                                </button>
+                            )}
+                        />
+                    ) : (
+                        <div className="habit-list">
+                            {habits.map(habit => {
+                                const streak = streakOf(habit.checks);
+                                const done = doneByHabit[habit.id] || 0;
+                                return (
+                                    <div
+                                        className="habit-row"
+                                        key={habit.id}
+                                        style={{ '--habit-tint': tintOf(habit.category) }}
+                                    >
+                                        <div className="habit-info">
+                                            <span className="habit-dot" />
+                                            <div className="habit-title">
+                                                <b>{habit.name}</b>
+                                                <small>{habit.category} · {done}/{habit.target} this week</small>
+                                                <Progress value={Math.round((done / Math.max(1, habit.target)) * 100)} tint={tintOf(habit.category)} />
+                                            </div>
+                                        </div>
+
+                                        <div className="habit-week" role="group" aria-label={`Week for ${habit.name}`}>
+                                            {week.map((day, index) => {
+                                                const checked = habit.checks.includes(day);
+                                                const dayNumber = parseDateOnly(day)?.getDate() || '';
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        key={day}
+                                                        className={`habit-day${checked ? ' is-done' : ''}${day === todayISO() ? ' is-today' : ''}`}
+                                                        onClick={() => toggleDay(habit, day)}
+                                                        title={`${checked ? 'Uncheck' : 'Check'} ${habit.name} for ${formatDay(day)}`}
+                                                        aria-pressed={checked}
+                                                    >
+                                                        <small>{WEEKDAYS[index]}</small>
+                                                        <b>{dayNumber}</b>
+                                                        {checked && <Check size={10} strokeWidth={3} />}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="habit-streak" title={`${streak} day streak`}>
+                                            <Flame size={13} />
+                                            <b>{streak}</b>
+                                            <small>day{streak === 1 ? '' : 's'}</small>
+                                        </div>
+
+                                        <div className="habit-actions">
+                                            <button type="button" className="life-icon-btn" title="Edit habit" onClick={() => setEditing(habit)}>
+                                                <Pencil size={13} />
+                                            </button>
+                                            <button type="button" className="life-icon-btn is-danger" title="Delete habit" onClick={() => deleteHabit(habit)}>
+                                                <Trash2 size={13} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {editing && (
+                <HabitEditor
+                    habit={editing}
+                    onClose={() => setEditing(null)}
+                    onSave={saveHabit}
+                    onDelete={deleteHabit}
+                />
+            )}
+        </div>
+    );
+}

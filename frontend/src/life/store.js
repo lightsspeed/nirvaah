@@ -12,6 +12,8 @@ import { parseDateOnly, parseInstant } from '../dates';
 export const NOTES_KEY = 'moneta_notes';
 export const TASKS_KEY = 'moneta_tasks';
 export const EVENTS_KEY = 'moneta_events';
+export const HABITS_KEY = 'moneta_habits';
+export const TRADES_KEY = 'moneta_trades';
 export const ACTIVITY_KEY = 'moneta_activity';
 
 const CHANGE_EVENT = 'moneta:data-change';
@@ -263,6 +265,38 @@ export const normalizeTask = t => {
     };
 };
 
+const HABIT_CATEGORIES = ['Health', 'Mind', 'Money', 'Work', 'Home', 'Personal'];
+const normalizeChecks = value => (Array.isArray(value) ? value : [])
+    .map(day => String(day || '').slice(0, 10))
+    .filter(day => parseDateOnly(day))
+    .filter((day, index, list) => list.indexOf(day) === index)
+    .sort();
+
+export const normalizeHabit = h => ({
+    id: h.id ?? uid(),
+    name: (h.name || '').trim() || 'Untitled habit',
+    category: HABIT_CATEGORIES.includes(h.category) ? h.category : (h.category || 'Personal'),
+    target: Math.max(1, Math.min(7, Number(h.target) || 7)),
+    checks: normalizeChecks(h.checks),
+    createdAt: h.createdAt || Date.now(),
+    updatedAt: h.updatedAt || Date.now(),
+});
+
+export const normalizeTrade = t => ({
+    id: t.id ?? uid(),
+    trade_date: toISODate(t.trade_date || t.date) || todayISO(),
+    symbol: (t.symbol || '').trim().toUpperCase(),
+    side: String(t.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy',
+    quantity: Number(t.quantity) || 0,
+    entry_price: Number(t.entry_price) || 0,
+    exit_price: t.exit_price === '' || t.exit_price == null ? null : Number(t.exit_price),
+    fees: Number(t.fees) || 0,
+    setup: t.setup || '',
+    notes: t.notes || '',
+    createdAt: t.createdAt || Date.now(),
+    updatedAt: t.updatedAt || Date.now(),
+});
+
 export const normalizeEvent = e => ({
     id: e.id ?? uid(),
     title: (e.title || '').trim() || 'Untitled event',
@@ -279,12 +313,16 @@ const DEFAULTS = {
     [NOTES_KEY]: [],
     [TASKS_KEY]: [],
     [EVENTS_KEY]: [],
+    [HABITS_KEY]: [],
+    [TRADES_KEY]: [],
 };
 
 const NORMALIZERS = {
     [NOTES_KEY]: items => items.map(normalizeNote),
     [TASKS_KEY]: items => items.map(normalizeTask),
     [EVENTS_KEY]: items => items.map(normalizeEvent),
+    [HABITS_KEY]: items => items.map(normalizeHabit),
+    [TRADES_KEY]: items => items.map(normalizeTrade),
 };
 
 export function loadCollection(key) {
@@ -341,6 +379,8 @@ const ENDPOINTS = {
     [NOTES_KEY]: 'notes',
     [TASKS_KEY]: 'tasks',
     [EVENTS_KEY]: 'journal',
+    [HABITS_KEY]: 'habits',
+    [TRADES_KEY]: 'trades',
 };
 
 export const authHeaders = ({ json = true } = {}) => {
