@@ -8897,8 +8897,9 @@ main > header .topbar-search {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* Let the By habit card run down to the page footer on a desktop. */
-  min-height: calc(100dvh - 240px);
+  /* Let the heatmap card run down to the page footer on a desktop. The offset
+     is the app header, page hero and footer chrome around the life page. */
+  min-height: calc(100dvh - 159px);
 }
 
 .habit-dash-head-left {
