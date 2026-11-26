@@ -9231,3 +9231,173 @@ main > header .topbar-search {
   .habit-dash-habit-pct { grid-area: pct; }
   .habit-dash-habit-count { display: none; }
 }
+
+/* ==========================================================================
+   HABIT YEAR HEATMAPS
+   One row per habit, one small square per day of the year. The panel fills
+   the remaining desktop height and scrolls its rows inside.
+   ========================================================================== */
+
+.habit-year-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.habit-year-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.habit-year-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.habit-year-head h3 span {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+.habit-year-head small {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.habit-year-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.habit-year-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.habit-year-row:last-child {
+  border-bottom: none;
+}
+
+.habit-year-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.habit-year-info .habit-dot {
+  margin-top: 6px;
+}
+
+.habit-year-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.habit-year-name b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.habit-year-name small {
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.habit-year-map {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.habit-year-weeks {
+  display: flex;
+  gap: 2px;
+  width: max-content;
+}
+
+.habit-year-week {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.habit-year-cell {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--bg-inset);
+}
+
+.habit-year-cell.is-checked {
+  background: var(--habit-tint, var(--success));
+}
+
+.habit-year-cell.is-future {
+  opacity: 0.28;
+}
+
+.habit-year-cell.is-outside {
+  background: transparent;
+}
+
+@media (max-width: 1100px) {
+  .habit-year-row {
+    grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
+  }
+
+  .habit-year-cell {
+    width: 7px;
+    height: 7px;
+  }
+}
+
+@media (max-width: 768px) {
+  .habit-year-panel {
+    flex: none;
+    max-height: 62vh;
+  }
+
+  .habit-year-list {
+    overflow-y: auto;
+  }
+
+  .habit-year-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px 2px;
+  }
+
+  .habit-year-cell {
+    width: 4px;
+    height: 4px;
+    border-radius: 1px;
+  }
+
+  .habit-year-weeks,
+  .habit-year-week {
+    gap: 1px;
+  }
+}
