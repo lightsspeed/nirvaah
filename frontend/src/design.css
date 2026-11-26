@@ -9401,12 +9401,31 @@ main > header .topbar-search {
     padding: 10px 2px;
   }
 
+  /* A phone cannot fit 53 readable dots on one line; wrap the year into two
+     half-year rows so every dot gets roughly twice the diameter. */
   .habit-year-months {
-    margin-bottom: 5px;
-    font-size: 7.5px;
+    display: none;
   }
 
   .habit-year-dots {
-    gap: 1.5px;
+    grid-template-columns: repeat(27, minmax(0, 1fr));
+    gap: 2px;
+    row-gap: 7px;
+  }
+
+  .habit-year-dots::after {
+    content: 'Jan - Jun / Jul - Dec';
+    grid-column: 1 / -1;
+    margin-top: 3px;
+    font-family: var(--font-mono);
+    font-size: 8px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Explain the two rows once, not under every habit. */
+  .habit-year-row:not(:first-child) .habit-year-dots::after {
+    content: none;
   }
 }
