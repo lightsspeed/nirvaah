@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
-    Plus, Check, Flame, CalendarCheck, Trash2, Pencil, ListChecks,
+    Plus, Check, Flame, CalendarCheck, Trash2, Pencil, ListChecks, LayoutDashboard,
 } from 'lucide-react';
 import {
     useCollection, logActivity, uid, todayISO, shiftISO, HABITS_KEY,
     formatDay,
 } from './store';
-import { PageHero, StatTile, Chip, EmptyState, Modal, Progress } from './ui';
+import { PageHero, StatTile, Chip, EmptyState, Modal, Progress, Segmented } from './ui';
 import CustomSelect from '../CustomSelect';
 import { useConfirm } from '../ConfirmDialog';
 import { parseDateOnly } from '../dates';
@@ -60,6 +60,309 @@ function streakOf(checks) {
         cursor = shiftISO(cursor, -1);
     }
     return streak;
+}
+
+const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function periodDays(period) {
+    const today = todayISO();
+    const day = parseDateOnly(today);
+    if (!day) return { days: [], label: '' };
+
+    if (period === 'month') {
+        const year = day.getFullYear();
+        const month = day.getMonth();
+        const total = new Date(year, month + 1, 0).getDate();
+        const days = Array.from({ length: total }, (_, index) => (
+            `${year}-${String(month + 1).padStart(2, '0')}-${String(index + 1).padStart(2, '0')}`
+        ));
+        return { days, label: `${MONTH_NAMES[month]} ${year}`, year, month };
+    }
+
+    if (period === 'year') {
+        const year = day.getFullYear();
+        const days = [];
+        let cursor = `${year}-01-01`;
+        const end = `${year}-12-31`;
+        while (cursor <= end) {
+            days.push(cursor);
+            cursor = shiftISO(cursor, 1);
+        }
+        return { days, label: String(year), year };
+    }
+
+    const offset = (day.getDay() + 6) % 7;
+    const start = shiftISO(today, -offset);
+    const days = Array.from({ length: 7 }, (_, index) => shiftISO(start, index));
+    return { days, label: `Week of ${formatDay(start)}` };
+}
+
+function longestRun(checks, days) {
+    const set = new Set(checks || []);
+    let best = 0;
+    let run = 0;
+    days.forEach(day => {
+        if (set.has(day)) {
+            run += 1;
+            best = Math.max(best, run);
+        } else {
+            run = 0;
+        }
+    });
+    return best;
+}
+
+function heatStyle(ratio) {
+    return { '--heat': `${Math.round(ratio * 100)}%` };
+}
+
+function HabitHeatLegend() {
+    return (
+        <div className="habit-dash-legend" aria-hidden="true">
+            <span>Less</span>
+            <i style={{ '--heat': '0%' }} />
+            <i style={{ '--heat': '25%' }} />
+            <i style={{ '--heat': '50%' }} />
+            <i style={{ '--heat': '75%' }} />
+            <i style={{ '--heat': '100%' }} />
+            <span>More</span>
+        </div>
+    );
+}
+
+function HabitDashboard({ habits }) {
+    const [period, setPeriod] = useState('week');
+    const today = todayISO();
+
+    const data = useMemo(() => {
+        const info = periodDays(period);
+        const elapsed = info.days.filter(day => day <= today);
+        const elapsedSet = new Set(elapsed);
+        const countFor = day => habits.filter(habit => habit.checks.includes(day)).length;
+        const checkIns = elapsed.reduce((sum, day) => sum + countFor(day), 0);
+        const possible = habits.length * elapsed.length;
+        const perfect = elapsed.filter(day => habits.length > 0 && countFor(day) === habits.length).length;
+        const activeDays = elapsed.filter(day => countFor(day) > 0).length;
+        const best = habits.reduce(
+            (longest, habit) => Math.max(longest, longestRun(habit.checks, elapsed)),
+            0,
+        );
+        const byHabit = {};
+        habits.forEach(habit => {
+            const count = habit.checks.filter(day => elapsedSet.has(day)).length;
+            byHabit[habit.id] = {
+                count,
+                pct: elapsed.length ? Math.round((count / elapsed.length) * 100) : 0,
+            };
+        });
+        return {
+            info,
+            elapsed,
+            countFor,
+            checkIns,
+            possible,
+            pct: possible ? Math.round((checkIns / possible) * 100) : 0,
+            perfect,
+            activeDays,
+            best,
+            byHabit,
+        };
+    }, [habits, period, today]);
+
+    if (habits.length === 0) {
+        return (
+            <div className="panel life-panel">
+                <EmptyState
+                    icon={ListChecks}
+                    title="Nothing to chart yet"
+                    hint="Add a habit and start checking it off — the dashboard fills in from your history."
+                />
+            </div>
+        );
+    }
+
+    const ratioFor = day => (habits.length ? data.countFor(day) / habits.length : 0);
+    const firstDay = data.info.days.length ? parseDateOnly(data.info.days[0]) : null;
+    const monthOffset = firstDay ? (firstDay.getDay() + 6) % 7 : 0;
+
+    const yearWeeks = (() => {
+        if (period !== 'year' || !data.info.year) return [];
+        const first = parseDateOnly(`${data.info.year}-01-01`);
+        const end = `${data.info.year}-12-31`;
+        const start = shiftISO(`${data.info.year}-01-01`, -((first.getDay() + 6) % 7));
+        const weeks = [];
+        let cursor = start;
+        while (cursor <= end) {
+            weeks.push(Array.from({ length: 7 }, (_, index) => shiftISO(cursor, index)));
+            cursor = shiftISO(cursor, 7);
+        }
+        return weeks;
+    })();
+
+    return (
+        <div className="habit-dash">
+            <div className="habit-dash-intro">
+                <h2>Habit dashboard</h2>
+                <p>Consistency, streaks and check-ins across the period.</p>
+            </div>
+
+            <div className="life-toolbar">
+                <Segmented
+                    options={[
+                        { id: 'week', label: 'Week' },
+                        { id: 'month', label: 'Month' },
+                        { id: 'year', label: 'Year' },
+                    ]}
+                    value={period}
+                    onChange={setPeriod}
+                />
+                <span className="habit-dash-range">{data.info.label}</span>
+            </div>
+
+            <div className="life-stats">
+                <StatTile
+                    label="Completion"
+                    value={`${data.pct}%`}
+                    hint={`${data.checkIns} of ${data.possible} check-ins`}
+                    icon={Check}
+                    tint="#7fa650"
+                />
+                <StatTile
+                    label="Check-ins"
+                    value={data.checkIns}
+                    hint={`${data.activeDays} active day${data.activeDays === 1 ? '' : 's'}`}
+                    icon={CalendarCheck}
+                    tint="#6a9bd0"
+                />
+                <StatTile
+                    label="Perfect days"
+                    value={data.perfect}
+                    hint="Every habit done"
+                    icon={ListChecks}
+                    tint="#c9a227"
+                />
+                <StatTile
+                    label="Best streak"
+                    value={`${data.best}d`}
+                    hint="Longest run this period"
+                    icon={Flame}
+                    tint="#d97757"
+                />
+            </div>
+
+            <div className="panel life-panel habit-dash-heat">
+                <div className="habit-dash-head">
+                    <h3>{period === 'week' ? 'This week' : period === 'month' ? 'This month' : 'This year'}</h3>
+                    <span>{data.info.label}</span>
+                </div>
+
+                {period === 'week' && (
+                    <div className="habit-dash-week">
+                        {data.info.days.map((day, index) => {
+                            const count = data.countFor(day);
+                            const future = day > today;
+                            return (
+                                <div
+                                    key={day}
+                                    className={`habit-dash-day${future ? ' is-future' : ''}${!future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
+                                    style={heatStyle(ratioFor(day))}
+                                    title={`${formatDay(day)} — ${count} of ${habits.length} habits`}
+                                >
+                                    <small>{WEEKDAYS[index]}</small>
+                                    <b>{parseDateOnly(day)?.getDate()}</b>
+                                    <span>{count}/{habits.length}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {period === 'month' && (
+                    <div className="habit-dash-month">
+                        <div className="habit-dash-month-head">
+                            {WEEKDAYS.map((label, index) => (
+                                <span key={`${label}-${index}`}>{label}</span>
+                            ))}
+                        </div>
+                        <div className="habit-dash-month-grid">
+                            {Array.from({ length: monthOffset }, (_, index) => (
+                                <i className="habit-dash-day is-blank" key={`blank-${index}`} />
+                            ))}
+                            {data.info.days.map(day => {
+                                const count = data.countFor(day);
+                                const future = day > today;
+                                return (
+                                    <div
+                                        key={day}
+                                        className={`habit-dash-day${future ? ' is-future' : ''}${!future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
+                                        style={heatStyle(ratioFor(day))}
+                                        title={`${formatDay(day)} — ${count} of ${habits.length} habits`}
+                                    >
+                                        <b>{parseDateOnly(day)?.getDate()}</b>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {period === 'year' && (
+                    <div className="habit-dash-year-scroll">
+                        <div className="habit-dash-year">
+                            {yearWeeks.map((week, weekIndex) => (
+                                <div className="habit-dash-year-week" key={`week-${weekIndex}`}>
+                                    {week.map(day => {
+                                        const outside = day < `${data.info.year}-01-01` || day > `${data.info.year}-12-31`;
+                                        const future = day > today;
+                                        const count = outside ? 0 : data.countFor(day);
+                                        return (
+                                            <i
+                                                key={day}
+                                                className={`habit-dash-year-cell${outside ? ' is-blank' : ''}${future && !outside ? ' is-future' : ''}${!outside && !future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
+                                                style={outside ? undefined : heatStyle(ratioFor(day))}
+                                                title={outside ? '' : `${formatDay(day)} — ${count} of ${habits.length} habits`}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                <HabitHeatLegend />
+            </div>
+
+            <div className="panel life-panel habit-dash-list">
+                <div className="habit-dash-head">
+                    <h3>By habit</h3>
+                    <span>{data.info.label}</span>
+                </div>
+                <div className="habit-dash-habits">
+                    {habits.map(habit => {
+                        const row = data.byHabit[habit.id];
+                        return (
+                            <div className="habit-dash-habit" key={habit.id} style={{ '--habit-tint': habitColor(habit) }}>
+                                <span className="habit-dot" />
+                                <div className="habit-dash-habit-name">
+                                    <b>{habit.name}</b>
+                                    <small>{habit.category}</small>
+                                </div>
+                                <div className="habit-dash-habit-bar">
+                                    <Progress value={row.pct} tint={habitColor(habit)} />
+                                </div>
+                                <span className="habit-dash-habit-count">{row.count}/{data.elapsed.length}</span>
+                                <b className="habit-dash-habit-pct">{row.pct}%</b>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+    );
 }
 
 function HabitEditor({ habit, onClose, onSave, onDelete }) {
@@ -139,6 +442,7 @@ export default function HabitsPage() {
     const { ask, dialog } = useConfirm();
     const [habits, setHabits] = useCollection(HABITS_KEY);
     const [editing, setEditing] = useState(null);
+    const [view, setView] = useState('habits');
     // Computed per render so an app left open across midnight shows the new day.
     const week = weekDates();
 
@@ -205,11 +509,25 @@ export default function HabitsPage() {
         <div className="life-page habits-page">
             {dialog}
             <PageHero>
+                <button
+                    type="button"
+                    className="life-btn"
+                    onClick={() => setView(current => current === 'dashboard' ? 'habits' : 'dashboard')}
+                    aria-label={view === 'dashboard' ? 'Back to habits' : 'Habit dashboard'}
+                    title={view === 'dashboard' ? 'Back to habits' : 'Habit dashboard'}
+                >
+                    {view === 'dashboard' ? <ListChecks size={15} /> : <LayoutDashboard size={15} />}
+                    <span className="life-btn-label">{view === 'dashboard' ? 'Habits' : 'Dashboard'}</span>
+                </button>
                 <button type="button" className="life-btn is-primary" onClick={() => setEditing(blankHabit())} aria-label="New habit">
                     <Plus size={15} /><span className="life-btn-label">New habit</span>
                 </button>
             </PageHero>
 
+            {view === 'dashboard' ? (
+                <HabitDashboard habits={habits} />
+            ) : (
+            <>
             <div className="life-stats">
                 <StatTile label="Active habits" value={stats.active} hint="Small routines, kept" icon={ListChecks} tint="#6a9bd0" />
                 <StatTile label="Done today" value={stats.doneToday} hint={stats.active ? `${stats.active - stats.doneToday} still to go` : 'Add the first one'} icon={CalendarCheck} tint="#7fa650" />
@@ -292,6 +610,9 @@ export default function HabitsPage() {
                     )}
                 </div>
             </div>
+
+            </>
+            )}
 
             {editing && (
                 <HabitEditor
