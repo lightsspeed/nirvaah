@@ -9175,7 +9175,9 @@ main > header .topbar-search {
 @media (max-width: 768px) {
   .habit-dash {
     gap: 14px;
-    min-height: 0;
+    /* Phones get the same footer-to-header fill as desktop; the smaller offset
+       accounts for the compact header and footer. */
+    min-height: calc(100dvh - 120px);
   }
 
   .habit-dash-list {
@@ -9388,8 +9390,8 @@ main > header .topbar-search {
 
 @media (max-width: 768px) {
   .habit-year-panel {
-    flex: none;
-    max-height: 62vh;
+    flex: 1;
+    max-height: none;
   }
 
   .habit-year-list {
