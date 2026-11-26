@@ -204,22 +204,6 @@ function HabitDashboard({ habits }) {
 
     return (
         <div className="habit-dash">
-            <div className="habit-dash-top">
-                <h2>Habit dashboard</h2>
-                <div className="habit-dash-controls">
-                    <Segmented
-                        options={[
-                            { id: 'week', label: 'Week' },
-                            { id: 'month', label: 'Month' },
-                            { id: 'year', label: 'Year' },
-                        ]}
-                        value={period}
-                        onChange={setPeriod}
-                    />
-                    <span className="habit-dash-range">{data.info.label}</span>
-                </div>
-            </div>
-
             <div className="life-stats">
                 <StatTile
                     label="Completion"
@@ -251,10 +235,21 @@ function HabitDashboard({ habits }) {
                 />
             </div>
 
-            <div className="habit-dash-grid">
             <div className="panel life-panel habit-dash-heat">
                 <div className="habit-dash-head">
-                    <h3>{period === 'week' ? 'This week' : period === 'month' ? 'This month' : 'This year'}</h3>
+                    <div className="habit-dash-head-left">
+                        <h3>{period === 'week' ? 'This week' : period === 'month' ? 'This month' : 'This year'}</h3>
+                        <span className="habit-dash-range">{data.info.label}</span>
+                    </div>
+                    <Segmented
+                        options={[
+                            { id: 'week', label: 'Week' },
+                            { id: 'month', label: 'Month' },
+                            { id: 'year', label: 'Year' },
+                        ]}
+                        value={period}
+                        onChange={setPeriod}
+                    />
                 </div>
 
                 {period === 'week' && (
@@ -359,7 +354,6 @@ function HabitDashboard({ habits }) {
                         );
                     })}
                 </div>
-            </div>
             </div>
         </div>
     );
@@ -508,7 +502,7 @@ export default function HabitsPage() {
     return (
         <div className="life-page habits-page">
             {dialog}
-            <PageHero>
+            <PageHero actionsInHeader>
                 <button
                     type="button"
                     className="life-btn habit-view-toggle"

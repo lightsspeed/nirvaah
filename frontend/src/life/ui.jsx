@@ -4,7 +4,7 @@ import { Check, ChevronDown, Plus, Search, Trash2, X } from 'lucide-react';
 import { tintOf } from './store';
 import { useConfirm } from '../ConfirmDialog';
 
-export function PageHero({ title, description, children }) {
+export function PageHero({ title, description, children, actionsInHeader = false }) {
     // The page name and its subtext live in the app header now; the hero only
     // keeps copy for views that need their own title (a task project).
     const hasCopy = Boolean(title || description);
@@ -22,14 +22,15 @@ export function PageHero({ title, description, children }) {
     }, []);
 
     useEffect(() => {
-        setSlot(phone ? document.getElementById('page-header-actions') : null);
-    }, [phone, hasCopy]);
+        const inHeader = actionsInHeader || phone;
+        setSlot(inHeader ? document.getElementById('page-header-actions') : null);
+    }, [phone, hasCopy, actionsInHeader]);
 
     const actions = children ? <div className="life-hero-actions">{children}</div> : null;
 
-    // Phones carry the page action in the header, beside the search, so it does
-    // not consume a row of its own above the content.
-    if (phone && !hasCopy) {
+    // Phones — and pages that opt in — carry the page action in the header,
+    // beside the search, so it does not consume a row above the content.
+    if ((phone || actionsInHeader) && !hasCopy) {
         return slot && actions ? createPortal(actions, slot) : null;
     }
 

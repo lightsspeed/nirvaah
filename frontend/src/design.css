@@ -8897,30 +8897,15 @@ main > header .topbar-search {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  /* Let the By habit card run down to the page footer on a desktop. */
+  min-height: calc(100dvh - 240px);
 }
 
-.habit-dash-top {
+.habit-dash-head-left {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.habit-dash-top h2 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--foreground);
-}
-
-.habit-dash-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 /* Keep the Dashboard ↔ Habits toggle one width; only the label changes. */
@@ -8929,13 +8914,6 @@ main > header .topbar-search {
     min-width: 132px;
     justify-content: center;
   }
-}
-
-.habit-dash-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-  gap: 18px;
-  align-items: start;
 }
 
 .habit-dash .life-stat {
@@ -8985,7 +8963,6 @@ main > header .topbar-search {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
-  max-width: 620px;
 }
 
 .habit-dash-day {
@@ -8995,7 +8972,7 @@ main > header .topbar-search {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  aspect-ratio: 1 / 1.15;
+  min-height: 88px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--success) var(--heat, 0%), var(--bg-inset));
@@ -9039,7 +9016,7 @@ main > header .topbar-search {
 }
 
 .habit-dash-month {
-  max-width: 620px;
+  max-width: none;
 }
 
 .habit-dash-month-head {
@@ -9065,7 +9042,7 @@ main > header .topbar-search {
 }
 
 .habit-dash-month-grid .habit-dash-day {
-  aspect-ratio: 1;
+  min-height: 74px;
 }
 
 .habit-dash-year-scroll {
@@ -9123,9 +9100,20 @@ main > header .topbar-search {
   background: color-mix(in srgb, var(--success) var(--heat), var(--bg-inset));
 }
 
+.habit-dash-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .habit-dash-habits {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .habit-dash-habit {
@@ -9186,19 +9174,19 @@ main > header .topbar-search {
 @media (max-width: 768px) {
   .habit-dash {
     gap: 14px;
+    min-height: 0;
   }
 
-  .habit-dash-top {
+  .habit-dash-list {
+    flex: none;
+  }
+
+  .habit-dash-habits {
+    overflow: visible;
+  }
+
+  .habit-dash-head {
     align-items: flex-start;
-  }
-
-  .habit-dash-controls {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .habit-dash-grid {
-    grid-template-columns: 1fr;
   }
 
   .habit-dash-week {
@@ -9206,8 +9194,12 @@ main > header .topbar-search {
   }
 
   .habit-dash-day {
-    aspect-ratio: 1 / 1.2;
+    min-height: 72px;
     border-radius: var(--radius-sm);
+  }
+
+  .habit-dash-month-grid .habit-dash-day {
+    min-height: 56px;
   }
 
   .habit-dash-day b {
