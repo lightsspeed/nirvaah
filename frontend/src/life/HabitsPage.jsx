@@ -141,6 +141,13 @@ export default function HabitsPage() {
     const [editing, setEditing] = useState(null);
     // Computed per render so an app left open across midnight shows the new day.
     const week = weekDates();
+    const today = todayISO();
+    const monthPrefix = today.slice(0, 7);
+    const monthElapsed = Number(today.slice(8, 10)) || 1;
+    const last28 = useMemo(
+        () => Array.from({ length: 28 }, (_, index) => shiftISO(today, -(27 - index))),
+        [today],
+    );
 
     const doneByHabit = useMemo(() => {
         const map = {};
@@ -151,18 +158,40 @@ export default function HabitsPage() {
     }, [habits, week]);
 
     const stats = useMemo(() => {
-        const doneToday = habits.filter(habit => habit.checks.includes(todayISO())).length;
+        const doneToday = habits.filter(habit => habit.checks.includes(today)).length;
         const bestStreak = habits.reduce((best, habit) => Math.max(best, streakOf(habit.checks)), 0);
         const doneWeek = habits.reduce((sum, habit) => sum + (doneByHabit[habit.id] || 0), 0);
-        const possible = habits.length * 7;
+        const monthDone = habits.reduce(
+            (sum, habit) => sum + habit.checks.filter(day => day.startsWith(monthPrefix)).length,
+            0,
+        );
+        const totalCheckIns = habits.reduce((sum, habit) => sum + habit.checks.length, 0);
+        const possibleWeek = habits.length * 7;
+        const possibleMonth = habits.length * monthElapsed;
         return {
             active: habits.length,
             doneToday,
             bestStreak,
-            weekPct: possible ? Math.round((doneWeek / possible) * 100) : 0,
             doneWeek,
+            monthDone,
+            totalCheckIns,
+            weekPct: possibleWeek ? Math.round((doneWeek / possibleWeek) * 100) : 0,
+            monthPct: possibleMonth ? Math.round((monthDone / possibleMonth) * 100) : 0,
         };
-    }, [habits, doneByHabit]);
+    }, [habits, doneByHabit, today, monthPrefix, monthElapsed]);
+
+    const heat = useMemo(() => {
+        const counts = last28.map(day => habits.filter(habit => habit.checks.includes(day)).length);
+        const checkIns = counts.reduce((sum, count) => sum + count, 0);
+        const perfect = habits.length ? counts.filter(count => count === habits.length).length : 0;
+        const possible = habits.length * last28.length;
+        return {
+            counts,
+            checkIns,
+            perfect,
+            pct: possible ? Math.round((checkIns / possible) * 100) : 0,
+        };
+    }, [habits, last28]);
 
     const toggleDay = (habit, day) => {
         const done = habit.checks.includes(day);
@@ -210,12 +239,53 @@ export default function HabitsPage() {
                 </button>
             </PageHero>
 
-            <div className="life-stats">
+            <div className="life-stats habits-stats">
                 <StatTile label="Active habits" value={stats.active} hint="Small routines, kept" icon={ListChecks} tint="#6a9bd0" />
                 <StatTile label="Done today" value={stats.doneToday} hint={stats.active ? `${stats.active - stats.doneToday} still to go` : 'Add the first one'} icon={CalendarCheck} tint="#7fa650" />
-                <StatTile label="Best streak" value={`${stats.bestStreak}d`} hint="Consecutive days" icon={Flame} tint="#d97757" />
                 <StatTile label="This week" value={`${stats.weekPct}%`} hint={`${stats.doneWeek} check-ins so far`} icon={Check} tint="#c9a227" />
+                <StatTile label="This month" value={`${stats.monthPct}%`} hint={`${stats.monthDone} check-ins so far`} icon={CalendarCheck} tint="#5a7089" />
+                <StatTile label="Best streak" value={`${stats.bestStreak}d`} hint="Consecutive days" icon={Flame} tint="#d97757" />
+                <StatTile label="Total check-ins" value={stats.totalCheckIns} hint="Since you started" icon={ListChecks} tint="#8a5bd6" />
             </div>
+
+            {habits.length > 0 && (
+                <div className="panel life-panel habit-overview">
+                    <div className="habit-overview-head">
+                        <div>
+                            <h3>Last 4 weeks</h3>
+                            <p>
+                                <b>{heat.pct}%</b> completion · <b>{heat.checkIns}</b> check-ins · <b>{heat.perfect}</b> perfect day{heat.perfect === 1 ? '' : 's'}
+                            </p>
+                        </div>
+                        <div className="habit-overview-today">
+                            Today <b>{stats.doneToday}</b> / {stats.active}
+                        </div>
+                    </div>
+                    <div className="habit-heatmap" role="img" aria-label={`Last 28 days: ${heat.pct}% completion, ${heat.checkIns} check-ins`}>
+                        {last28.map((day, index) => {
+                            const count = heat.counts[index];
+                            const ratio = habits.length ? count / habits.length : 0;
+                            return (
+                                <span
+                                    key={day}
+                                    className={`habit-heat${habits.length && count === habits.length ? ' is-perfect' : ''}`}
+                                    style={{ '--heat': `${Math.round(ratio * 100)}%` }}
+                                    title={`${formatDay(day)} — ${count} of ${habits.length} habits`}
+                                />
+                            );
+                        })}
+                    </div>
+                    <div className="habit-heat-legend" aria-hidden="true">
+                        <span>Less</span>
+                        <i style={{ '--heat': '0%' }} />
+                        <i style={{ '--heat': '25%' }} />
+                        <i style={{ '--heat': '50%' }} />
+                        <i style={{ '--heat': '75%' }} />
+                        <i style={{ '--heat': '100%' }} />
+                        <span>More</span>
+                    </div>
+                </div>
+            )}
 
             <div className="panel life-panel">
                 <div className="life-scroll">
@@ -235,6 +305,7 @@ export default function HabitsPage() {
                             {habits.map(habit => {
                                 const streak = streakOf(habit.checks);
                                 const done = doneByHabit[habit.id] || 0;
+                                const monthCount = habit.checks.filter(day => day.startsWith(monthPrefix)).length;
                                 return (
                                     <div
                                         className="habit-row"
@@ -245,7 +316,7 @@ export default function HabitsPage() {
                                             <span className="habit-dot" />
                                             <div className="habit-title">
                                                 <b>{habit.name}</b>
-                                                <small>{habit.category} · {done}/{habit.target} this week</small>
+                                                <small>{habit.category} · {done}/{habit.target} this week · {monthCount} this month</small>
                                                 <Progress value={Math.round((done / Math.max(1, habit.target)) * 100)} tint={habitColor(habit)} />
                                             </div>
                                         </div>

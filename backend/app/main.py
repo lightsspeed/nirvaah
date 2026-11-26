@@ -1134,6 +1134,32 @@ def delete_trade(item_id: str, db: Session = Depends(get_db), user=Depends(get_c
     return {"ok": True}
 
 
+@app.get("/api/trading/settings")
+def get_trading_settings(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    row = db.get(models.TradingSettings, user.id)
+    return {
+        "budget": money.number(row.budget) if row else 0,
+        "updatedAt": iso_utc(row.updated_at) if row else None,
+    }
+
+
+@app.post("/api/trading/settings")
+def save_trading_settings(payload: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    try:
+        budget = money.require_money(payload.get("budget", 0), field="budget")
+    except money.MoneyError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    row = db.get(models.TradingSettings, user.id)
+    if not row:
+        row = models.TradingSettings(user_id=user.id, budget=budget)
+        db.add(row)
+    else:
+        row.budget = budget
+    row.updated_at = utcnow()
+    db.commit(); db.refresh(row)
+    return {"budget": money.number(row.budget), "updatedAt": iso_utc(row.updated_at)}
+
+
 @app.get("/api/sync/version")
 def sync_version(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """A tiny fingerprint of this user's life records. Clients poll it and
@@ -1146,7 +1172,8 @@ def sync_version(db: Session = Depends(get_db), user=Depends(get_current_user)):
     dead = db.query(func.count()).select_from(models.Deletion).filter(models.Deletion.user_id == user.id).scalar()
     parts = [
         stamp(models.Note), stamp(models.Task), stamp(models.JournalEntry),
-        stamp(models.Habit), stamp(models.Trade), str(dead or 0),
+        stamp(models.Habit), stamp(models.Trade), stamp(models.TradingSettings),
+        str(dead or 0),
     ]
     return {"version": "|".join(parts)}
 

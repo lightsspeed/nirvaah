@@ -8710,32 +8710,223 @@ main > header .topbar-search {
    TRADING JOURNAL
    ========================================================================== */
 
-.trade-intro {
+/* Habits: six numbers on a three-up grid, plus the four-week overview. */
+.habits-page .life-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.habit-overview {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--card);
+  flex-direction: column;
+  gap: 14px;
+}
+
+.habit-overview-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.habit-overview-head h3 {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.habit-overview-head p {
+  margin: 0;
+  font-size: var(--text-sm);
   color: var(--muted-foreground);
 }
 
-.trade-intro-mark {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: var(--chart-4);
+.habit-overview-head b {
+  color: var(--foreground);
 }
 
-.trade-intro p {
+.habit-overview-today {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.habit-overview-today b {
+  margin: 0 2px;
+  font-size: var(--text-lg);
+  letter-spacing: 0;
+  color: var(--foreground);
+}
+
+.habit-heatmap {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+  max-width: 430px;
+}
+
+.habit-heat {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--success) var(--heat, 0%), var(--bg-inset));
+}
+
+.habit-heat.is-perfect {
+  border-color: color-mix(in srgb, var(--success) 55%, transparent);
+}
+
+.habit-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+}
+
+.habit-heat-legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--success) var(--heat), var(--bg-inset));
+}
+
+/* Trading journal: a budget strip, a one-line composer, then cards. */
+.trade-budget-strip {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.trade-budget-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+}
+
+.trade-budget-cell small {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.trade-budget-cell b {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.trade-budget-cell b.is-muted {
+  color: var(--muted-foreground);
+}
+
+.trade-budget-strip .life-btn {
+  margin-left: auto;
+}
+
+.trade-budget-note {
   margin: 0;
   font-size: var(--text-sm);
   line-height: 1.5;
+  color: var(--muted-foreground);
 }
 
-.trade-intro b {
-  color: var(--foreground);
+.trade-composer-panel {
+  padding: 12px 14px !important;
+}
+
+.trade-quick-add {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trade-quick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trade-quick-row .life-input {
+  flex: 1 1 92px;
+  min-width: 0;
+  height: 38px;
+}
+
+.trade-quick-row .life-input:first-child {
+  flex: 1 1 120px;
+  text-transform: uppercase;
+}
+
+.trade-side-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: filter var(--duration-fast) var(--ease-out);
+}
+
+.trade-side-btn.is-buy {
+  background: var(--success-soft);
+  color: var(--success-soft-foreground);
+}
+
+.trade-side-btn.is-sell {
+  background: var(--destructive-soft);
+  color: var(--destructive-soft-foreground);
+}
+
+.trade-side-btn:hover {
+  filter: brightness(0.97);
+}
+
+.trade-quick-pnl {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.trade-quick-pnl.is-win { color: var(--success-soft-foreground); }
+.trade-quick-pnl.is-loss { color: var(--destructive); }
+
+.trade-quick-row .life-btn {
+  height: 38px;
+}
+
+.trade-quick-more {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .trade-count {
@@ -8758,6 +8949,19 @@ main > header .topbar-search {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--card);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+
+.trade-card:hover {
+  background: var(--accent);
+  border-color: var(--border);
+}
+
+.trade-card:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .trade-card header {
@@ -8850,9 +9054,17 @@ main > header .topbar-search {
 
 .trade-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 2px;
   margin-top: auto;
+}
+
+.trade-close-btn {
+  height: 28px;
+  padding: 0 9px;
+  margin-right: 4px;
+  font-size: var(--text-2xs);
 }
 
 .trade-form {
@@ -8871,9 +9083,76 @@ main > header .topbar-search {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.trade-form-pnl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+
+.trade-form-pnl b {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--foreground);
+}
+
+.trade-form-pnl.is-win b { color: var(--success-soft-foreground); }
+.trade-form-pnl.is-loss b { color: var(--destructive); }
+
+.close-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+
+.close-summary b {
+  font-family: var(--font-mono);
+  color: var(--foreground);
+}
+
+.close-summary small {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
 .trade-form-error {
   font-size: var(--text-xs);
   color: var(--destructive);
+}
+
+@media (max-width: 768px) {
+  /* Six numbers: three across on phones rather than a 4-up strip with two
+     orphaned tiles on the second row. */
+  .habits-page .life-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .habit-overview-head {
+    align-items: flex-start;
+  }
+
+  .habit-heatmap {
+    max-width: none;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 360px) {
+  .habits-page .life-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
 }
 
 @media (max-width: 700px) {
@@ -8884,5 +9163,38 @@ main > header .topbar-search {
   .trade-form-grid,
   .trade-form-grid.is-three {
     grid-template-columns: 1fr;
+  }
+
+  .trade-quick-row .life-input {
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  .trade-quick-row .life-input:first-child {
+    flex: 1 1 100%;
+  }
+
+  .trade-quick-row .trade-side-btn {
+    flex: 0 0 auto;
+  }
+
+  .trade-quick-row .life-btn {
+    flex: 1 1 auto;
+  }
+
+  .trade-quick-pnl {
+    flex: 1 1 100%;
+  }
+
+  .trade-quick-more {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-budget-strip {
+    gap: 12px;
+  }
+
+  .trade-budget-strip .life-btn {
+    margin-left: 0;
+    width: 100%;
   }
 }

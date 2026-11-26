@@ -7,7 +7,7 @@ import {
     LogOut, Plus, Trash2, Pencil, Menu, X, ChartNoAxesCombined, Search,
     Bell, Eye, EyeOff, ArrowUpRight, ArrowDownLeft, CalendarDays, MoreHorizontal,
     ChevronDown, Landmark, RefreshCw, Filter, TrendingDown, Check, Calendar,
-    FileText, CheckSquare, Activity, SlidersHorizontal, Tag, RotateCcw,
+    FileText, CheckSquare, Repeat, Activity, SlidersHorizontal, Tag, RotateCcw,
     Sun, Moon, Laptop, BookOpen,
 } from 'lucide-react';
 import {
@@ -332,7 +332,7 @@ const pageSubtext = page => PAGE_SUBTEXT[page] || 'Your financial picture, organ
 const icons = {
     Dashboard: LayoutDashboard, Transactions: ArrowLeftRight, Budgets: Wallet,
     'Savings goals': Target, Investments: TrendingUp, 'Trading journal': Activity, Reports: ChartNoAxesCombined,
-    Notes: FileText, Tasks: CheckSquare, Habits: CheckSquare, Journal: BookOpen, Assistant: BrandAiIcon,
+    Notes: FileText, Tasks: CheckSquare, Habits: Repeat, Journal: BookOpen, Assistant: BrandAiIcon,
 };
 
 // ── Custom Tooltip for Charts ────────────────────────────────────────────────
@@ -1662,7 +1662,7 @@ export default function App() {
                     {page === 'Tasks' && <TasksPage />}
                     {page === 'Habits' && <HabitsPage />}
                     {page === 'Journal' && <JournalPage />}
-                    {page === 'Trading journal' && <TradingJournalPage />}
+                    {page === 'Trading journal' && <TradingJournalPage api={api} />}
 
                     {/* ════════════════════════════════════════════════════════════════════
              PAGE: DASHBOARD

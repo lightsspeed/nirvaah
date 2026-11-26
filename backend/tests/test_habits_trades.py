@@ -132,6 +132,17 @@ def test_habits_and_trades_do_not_touch_money(client):
     assert analytics["category_breakdown"] == []
 
 
+def test_the_trading_budget_round_trips(client):
+    assert client.get("/api/trading/settings").json()["budget"] == 0
+
+    saved = client.post("/api/trading/settings", json={"budget": 100000})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["budget"] == 100000
+    assert client.get("/api/trading/settings").json()["budget"] == 100000
+
+    assert client.post("/api/trading/settings", json={"budget": -1}).status_code == 422
+
+
 def test_the_sync_fingerprint_notices_habit_and_trade_changes(client):
     before = client.get("/api/sync/version").json()["version"]
 
@@ -143,4 +154,8 @@ def test_the_sync_fingerprint_notices_habit_and_trade_changes(client):
         "id": "trade-sync", "trade_date": "2026-11-26", "symbol": "INFY",
         "side": "buy", "quantity": 2, "entry_price": 100,
     })
-    assert client.get("/api/sync/version").json()["version"] != after_habit
+    after_trade = client.get("/api/sync/version").json()["version"]
+    assert after_trade != after_habit
+
+    client.post("/api/trading/settings", json={"budget": 50000})
+    assert client.get("/api/sync/version").json()["version"] != after_trade

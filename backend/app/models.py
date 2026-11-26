@@ -144,6 +144,15 @@ class Habit(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class TradingSettings(Base):
+    """Per-user journal settings. The budget is a reference figure for return
+    percentages only; it never becomes a money record or budget row."""
+    __tablename__ = "trading_settings"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    budget: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Trade(Base):
     """A trade journal entry. It is never read by the dashboard, budgets or reports."""
     __tablename__ = "trades"
