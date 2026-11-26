@@ -8899,8 +8899,16 @@ main > header .topbar-search {
   gap: 18px;
 }
 
-.habit-dash-intro h2 {
-  margin: 0 0 4px;
+.habit-dash-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.habit-dash-top h2 {
+  margin: 0;
   font-family: var(--font-display);
   font-size: var(--text-xl);
   font-weight: 600;
@@ -8908,10 +8916,40 @@ main > header .topbar-search {
   color: var(--foreground);
 }
 
-.habit-dash-intro p {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--muted-foreground);
+.habit-dash-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Keep the Dashboard ↔ Habits toggle one width; only the label changes. */
+@media (min-width: 641px) {
+  .habit-view-toggle {
+    min-width: 132px;
+    justify-content: center;
+  }
+}
+
+.habit-dash-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.habit-dash .life-stat {
+  min-height: 0;
+  padding: 12px 14px;
+  gap: 2px;
+}
+
+.habit-dash .life-stat strong {
+  font-size: 26px;
+}
+
+.habit-dash .life-stat small {
+  font-size: 11.5px;
 }
 
 .habit-dash-range {
@@ -8951,6 +8989,7 @@ main > header .topbar-search {
 }
 
 .habit-dash-day {
+  --heat-ink: var(--foreground);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -8962,23 +9001,28 @@ main > header .topbar-search {
   background: color-mix(in srgb, var(--success) var(--heat, 0%), var(--bg-inset));
 }
 
+.habit-dash-day.is-strong {
+  /* A filled cell is light in both themes; dark ink keeps every label legible. */
+  --heat-ink: #142014;
+}
+
 .habit-dash-day small {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted-foreground);
+  color: var(--heat-ink);
 }
 
 .habit-dash-day b {
   font-size: var(--text-md);
-  color: var(--foreground);
+  color: var(--heat-ink);
 }
 
 .habit-dash-day span {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  color: var(--muted-foreground);
+  color: var(--heat-ink);
 }
 
 .habit-dash-day.is-future {
@@ -9142,6 +9186,19 @@ main > header .topbar-search {
 @media (max-width: 768px) {
   .habit-dash {
     gap: 14px;
+  }
+
+  .habit-dash-top {
+    align-items: flex-start;
+  }
+
+  .habit-dash-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .habit-dash-grid {
+    grid-template-columns: 1fr;
   }
 
   .habit-dash-week {

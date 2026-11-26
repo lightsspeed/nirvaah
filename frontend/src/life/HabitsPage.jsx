@@ -204,22 +204,20 @@ function HabitDashboard({ habits }) {
 
     return (
         <div className="habit-dash">
-            <div className="habit-dash-intro">
+            <div className="habit-dash-top">
                 <h2>Habit dashboard</h2>
-                <p>Consistency, streaks and check-ins across the period.</p>
-            </div>
-
-            <div className="life-toolbar">
-                <Segmented
-                    options={[
-                        { id: 'week', label: 'Week' },
-                        { id: 'month', label: 'Month' },
-                        { id: 'year', label: 'Year' },
-                    ]}
-                    value={period}
-                    onChange={setPeriod}
-                />
-                <span className="habit-dash-range">{data.info.label}</span>
+                <div className="habit-dash-controls">
+                    <Segmented
+                        options={[
+                            { id: 'week', label: 'Week' },
+                            { id: 'month', label: 'Month' },
+                            { id: 'year', label: 'Year' },
+                        ]}
+                        value={period}
+                        onChange={setPeriod}
+                    />
+                    <span className="habit-dash-range">{data.info.label}</span>
+                </div>
             </div>
 
             <div className="life-stats">
@@ -253,22 +251,23 @@ function HabitDashboard({ habits }) {
                 />
             </div>
 
+            <div className="habit-dash-grid">
             <div className="panel life-panel habit-dash-heat">
                 <div className="habit-dash-head">
                     <h3>{period === 'week' ? 'This week' : period === 'month' ? 'This month' : 'This year'}</h3>
-                    <span>{data.info.label}</span>
                 </div>
 
                 {period === 'week' && (
                     <div className="habit-dash-week">
                         {data.info.days.map((day, index) => {
                             const count = data.countFor(day);
+                            const ratio = ratioFor(day);
                             const future = day > today;
                             return (
                                 <div
                                     key={day}
-                                    className={`habit-dash-day${future ? ' is-future' : ''}${!future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
-                                    style={heatStyle(ratioFor(day))}
+                                    className={`habit-dash-day${future ? ' is-future' : ''}${ratio >= 0.5 ? ' is-strong' : ''}${!future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
+                                    style={heatStyle(ratio)}
                                     title={`${formatDay(day)} — ${count} of ${habits.length} habits`}
                                 >
                                     <small>{WEEKDAYS[index]}</small>
@@ -293,12 +292,13 @@ function HabitDashboard({ habits }) {
                             ))}
                             {data.info.days.map(day => {
                                 const count = data.countFor(day);
+                                const ratio = ratioFor(day);
                                 const future = day > today;
                                 return (
                                     <div
                                         key={day}
-                                        className={`habit-dash-day${future ? ' is-future' : ''}${!future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
-                                        style={heatStyle(ratioFor(day))}
+                                        className={`habit-dash-day${future ? ' is-future' : ''}${ratio >= 0.5 ? ' is-strong' : ''}${!future && habits.length && count === habits.length ? ' is-perfect' : ''}`}
+                                        style={heatStyle(ratio)}
                                         title={`${formatDay(day)} — ${count} of ${habits.length} habits`}
                                     >
                                         <b>{parseDateOnly(day)?.getDate()}</b>
@@ -339,7 +339,6 @@ function HabitDashboard({ habits }) {
             <div className="panel life-panel habit-dash-list">
                 <div className="habit-dash-head">
                     <h3>By habit</h3>
-                    <span>{data.info.label}</span>
                 </div>
                 <div className="habit-dash-habits">
                     {habits.map(habit => {
@@ -360,6 +359,7 @@ function HabitDashboard({ habits }) {
                         );
                     })}
                 </div>
+            </div>
             </div>
         </div>
     );
@@ -511,7 +511,7 @@ export default function HabitsPage() {
             <PageHero>
                 <button
                     type="button"
-                    className="life-btn"
+                    className="life-btn habit-view-toggle"
                     onClick={() => setView(current => current === 'dashboard' ? 'habits' : 'dashboard')}
                     aria-label={view === 'dashboard' ? 'Back to habits' : 'Habit dashboard'}
                     title={view === 'dashboard' ? 'Back to habits' : 'Habit dashboard'}
