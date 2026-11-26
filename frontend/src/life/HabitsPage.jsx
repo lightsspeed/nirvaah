@@ -3,7 +3,7 @@ import {
     Plus, Check, Flame, CalendarCheck, Trash2, Pencil, ListChecks,
 } from 'lucide-react';
 import {
-    useCollection, logActivity, uid, todayISO, shiftISO, tintOf, HABITS_KEY,
+    useCollection, logActivity, uid, todayISO, shiftISO, HABITS_KEY,
     formatDay,
 } from './store';
 import { PageHero, StatTile, Chip, EmptyState, Modal, Progress } from './ui';
@@ -30,6 +30,24 @@ function weekDates() {
     const offset = day ? (day.getDay() + 6) % 7 : 0;
     const start = shiftISO(today, -offset);
     return Array.from({ length: 7 }, (_, index) => shiftISO(start, index));
+}
+
+// Every habit gets its own colour, assigned automatically from its stable id.
+// A 32-bit FNV-1a hash picks a hue, saturation and lightness, so the palette is
+// effectively unlimited (360 hues × 29 saturations × 16 lightness steps) and the
+// colour survives reloads and stays the same on every synced device.
+function habitColor(habit) {
+    const key = String(habit?.id || habit?.name || '');
+    let hash = 2166136261;
+    for (let i = 0; i < key.length; i++) {
+        hash ^= key.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    hash >>>= 0;
+    const hue = hash % 360;
+    const saturation = 52 + ((hash >>> 8) % 29);   // 52–80%
+    const lightness = 45 + ((hash >>> 16) % 16);    // 45–60%
+    return `hsl(${hue} ${saturation}% ${lightness}%)`;
 }
 
 function streakOf(checks) {
@@ -221,14 +239,14 @@ export default function HabitsPage() {
                                     <div
                                         className="habit-row"
                                         key={habit.id}
-                                        style={{ '--habit-tint': tintOf(habit.category) }}
+                                        style={{ '--habit-tint': habitColor(habit) }}
                                     >
                                         <div className="habit-info">
                                             <span className="habit-dot" />
                                             <div className="habit-title">
                                                 <b>{habit.name}</b>
                                                 <small>{habit.category} · {done}/{habit.target} this week</small>
-                                                <Progress value={Math.round((done / Math.max(1, habit.target)) * 100)} tint={tintOf(habit.category)} />
+                                                <Progress value={Math.round((done / Math.max(1, habit.target)) * 100)} tint={habitColor(habit)} />
                                             </div>
                                         </div>
 
