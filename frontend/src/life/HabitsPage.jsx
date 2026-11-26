@@ -6,7 +6,8 @@ import {
     useCollection, logActivity, uid, todayISO, shiftISO, tintOf, HABITS_KEY,
     formatDay,
 } from './store';
-import { PageHero, StatTile, Chip, EmptyState, Modal, Progress, Select } from './ui';
+import { PageHero, StatTile, Chip, EmptyState, Modal, Progress } from './ui';
+import CustomSelect from '../CustomSelect';
 import { useConfirm } from '../ConfirmDialog';
 import { parseDateOnly } from '../dates';
 
@@ -99,15 +100,18 @@ function HabitEditor({ habit, onClose, onSave, onDelete }) {
                         ))}
                     </div>
                 </div>
-                <Select
-                    label="Days per week"
-                    value={draft.target}
-                    onChange={value => setDraft({ ...draft, target: Number(value) })}
-                    options={[1, 2, 3, 4, 5, 6, 7].map(days => ({
-                        value: days,
-                        label: `${days} day${days === 1 ? '' : 's'} a week`,
-                    }))}
-                />
+                <div className="life-field">
+                    <span className="life-field-label">Days per week</span>
+                    <CustomSelect
+                        value={draft.target}
+                        onChange={value => setDraft({ ...draft, target: Number(value) })}
+                        options={[1, 2, 3, 4, 5, 6, 7].map(days => ({
+                            value: days,
+                            label: `${days} day${days === 1 ? '' : 's'} a week`,
+                        }))}
+                        fullWidth
+                    />
+                </div>
             </form>
         </Modal>
     );

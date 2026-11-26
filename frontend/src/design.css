@@ -8516,6 +8516,12 @@ main > header .topbar-search {
   color: var(--chart-3) !important;
 }
 
+/* A dropdown opened from a life-page dialog must sit above the dialog's scrim,
+   otherwise the menu renders behind the dimmed, blurred layer. */
+.custom-select-menu.is-fixed {
+  z-index: 10050 !important;
+}
+
 /* ==========================================================================
    HABITS
    ========================================================================== */

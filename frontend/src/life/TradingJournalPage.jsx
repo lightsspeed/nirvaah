@@ -5,7 +5,8 @@ import {
 import {
     useCollection, logActivity, uid, todayISO, formatDay, TRADES_KEY,
 } from './store';
-import { PageHero, StatTile, Segmented, EmptyState, Modal, Select } from './ui';
+import { PageHero, StatTile, Segmented, EmptyState, Modal } from './ui';
+import CustomSelect from '../CustomSelect';
 import { useConfirm } from '../ConfirmDialog';
 
 const INR = new Intl.NumberFormat('en-IN', {
@@ -127,15 +128,18 @@ function TradeEditor({ trade, onClose, onSave, onDelete }) {
                 </div>
 
                 <div className="trade-form-grid">
-                    <Select
-                        label="Side"
-                        value={draft.side}
-                        onChange={value => setDraft({ ...draft, side: value })}
-                        options={[
-                            { value: 'buy', label: 'Buy / Long' },
-                            { value: 'sell', label: 'Sell / Short' },
-                        ]}
-                    />
+                    <div className="life-field">
+                        <span className="life-field-label">Side</span>
+                        <CustomSelect
+                            value={draft.side}
+                            onChange={value => setDraft({ ...draft, side: value })}
+                            options={[
+                                { value: 'buy', label: 'Buy / Long' },
+                                { value: 'sell', label: 'Sell / Short' },
+                            ]}
+                            fullWidth
+                        />
+                    </div>
                     <label className="life-field">
                         <span className="life-field-label">Quantity</span>
                         <input
